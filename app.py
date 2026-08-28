@@ -53,10 +53,11 @@ class DengueRecord(db.Model):
 
 @login_manager.user_loader
 def load_user(user_id):
-    return User.query.get(int(user_id))
+    user = db.session.get(User, int(user_id))
+    return user if user and not user.is_blocked else None
 
 # ==========================================
-# AUTHENTICATION ROUTES (LOGIN & SIGN UP)
+# AUTHENTICATION ROUTES
 # ==========================================
 
 @app.route('/')
@@ -74,50 +75,19 @@ def login():
         password = request.form.get('password')
         user = User.query.filter_by(username=username).first()
         
-        if user and user.check_password(password):
+        if user and user.is_blocked:
+            flash('This account has been blocked. Contact your System Administrator.', 'error')
+        elif user and user.check_password(password):
             login_user(user)
             return redirect(url_for('dashboard'))
-        flash('Invalid username or password. Please try again.', 'error')
+        elif not user or not user.check_password(password):
+            flash('Invalid username or password. Please try again.', 'error')
         
     return render_template('login.html')
 
 @app.route('/signup', methods=['GET', 'POST'])
 def signup():
-    if current_user.is_authenticated:
-        return redirect(url_for('dashboard'))
-
-    if request.method == 'GET':
-        return render_template('signup.html')
-
-    username = request.form.get('username')
-    password = request.form.get('password')
-    confirm_password = request.form.get('confirm_password')
-
-    if not username or not password:
-        flash('Username and password are required.', 'error')
-        return redirect(url_for('signup'))
-
-    if password != confirm_password:
-        flash('Passwords do not match. Please try again.', 'error')
-        return redirect(url_for('signup'))
-
-    existing_user = User.query.filter_by(username=username).first()
-    if existing_user:
-        flash('Username is already taken. Please choose another.', 'error')
-        return redirect(url_for('signup'))
-
-    # Public sign-ups default to 'Viewer' (Admins can promote via /admin)
-    new_user = User(
-        username=username, 
-        role='Viewer', 
-        assigned_barangay='Pending Assignment'
-    )
-    new_user.set_password(password)
-    
-    db.session.add(new_user)
-    db.session.commit()
-
-    flash('Account registered successfully! You can now sign in.', 'info')
+    flash('Self-registration is disabled. Contact your System Administrator to request access.', 'info')
     return redirect(url_for('login'))
 
 @app.route('/logout')
@@ -323,6 +293,62 @@ def download_cases_excel():
                      as_attachment=True, download_name='lokalhealth-anonymized-case-data.xlsx')
 
 # Screen 5: Admin Settings & Role Assignment (Restricted to Admin Role)
+@app.route('/admin/users/create', methods=['POST'])
+@login_required
+def create_user():
+    if current_user.role != 'Admin':
+        flash('Unauthorized access: Admin permissions required.', 'error')
+        return redirect(url_for('dashboard'))
+
+    username = request.form.get('username', '').strip()
+    password = request.form.get('password', '')
+    role = request.form.get('role', 'Viewer')
+
+    if not username or not password:
+        flash('Username and password are required.', 'error')
+        return redirect(url_for('admin'))
+    if role not in {'Admin', 'BHW', 'Viewer'}:
+        flash('Invalid user role selected.', 'error')
+        return redirect(url_for('admin'))
+    if User.query.filter_by(username=username).first():
+        flash('Username is already taken.', 'error')
+        return redirect(url_for('admin'))
+
+    new_user = User(
+        username=username,
+        role=role,
+        can_create=request.form.get('can_create') == 'on',
+        can_edit=request.form.get('can_edit') == 'on',
+        can_delete=request.form.get('can_delete') == 'on',
+    )
+    new_user.set_password(password)
+    db.session.add(new_user)
+    db.session.commit()
+    flash(f'Account created for {username}.', 'info')
+    return redirect(url_for('admin'))
+
+@app.route('/admin/reset_password/<int:user_id>', methods=['POST'])
+@login_required
+def reset_password(user_id):
+    if current_user.role != 'Admin':
+        flash('Unauthorized access: Admin permissions required.', 'error')
+        return redirect(url_for('dashboard'))
+
+    new_password = request.form.get('new_password', '')
+    if not new_password.strip():
+        flash('A new password is required.', 'error')
+        return redirect(url_for('admin'))
+
+    user_item = db.session.get(User, user_id)
+    if user_item is None:
+        flash('User account not found.', 'error')
+        return redirect(url_for('admin'))
+
+    user_item.password_hash = generate_password_hash(new_password)
+    db.session.commit()
+    flash(f'Password reset successfully for {user_item.username}.', 'info')
+    return redirect(url_for('admin'))
+
 @app.route('/admin/users/<int:user_id>/toggle-block', methods=['POST'])
 @login_required
 def toggle_block(user_id):

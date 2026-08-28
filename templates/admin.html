@@ -6,6 +6,47 @@
     <p class="text-muted small">Manage Registered Accounts & Granular Access Permissions</p>
 </div>
 
+<div class="card border-0 shadow-sm p-4 mb-4">
+    <h5 class="fw-bold mb-3">Create User Account</h5>
+    <form method="POST" action="{{ url_for('create_user') }}">
+        <div class="row g-3 align-items-end">
+            <div class="col-md-3">
+                <label for="new-username" class="form-label">Username</label>
+                <input type="text" class="form-control" id="new-username" name="username" required>
+            </div>
+            <div class="col-md-3">
+                <label for="new-password" class="form-label">Temporary password</label>
+                <input type="password" class="form-control" id="new-password" name="password" required>
+            </div>
+            <div class="col-md-2">
+                <label for="new-role" class="form-label">Role</label>
+                <select class="form-select" id="new-role" name="role">
+                    <option value="Viewer">Viewer</option>
+                    <option value="BHW">BHW</option>
+                    <option value="Admin">Admin</option>
+                </select>
+            </div>
+            <div class="col-md-4">
+                <div class="d-flex gap-3 flex-wrap mb-2">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="new-can-create" name="can_create">
+                        <label class="form-check-label" for="new-can-create">Create</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="new-can-edit" name="can_edit">
+                        <label class="form-check-label" for="new-can-edit">Edit</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="new-can-delete" name="can_delete">
+                        <label class="form-check-label" for="new-can-delete">Delete</label>
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary">Create Account</button>
+            </div>
+        </div>
+    </form>
+</div>
+
 <div class="card border-0 shadow-sm p-4">
     <div class="d-flex justify-content-between align-items-center mb-3">
         <h5 class="fw-bold mb-0">Registered Users & Permissions</h5>
@@ -60,6 +101,9 @@
                         {% endif %}
                     </td>
                     <td class="text-end">
+                        <button type="button" class="btn btn-sm btn-outline-warning" data-bs-toggle="modal" data-bs-target="#resetPasswordModal{{ user_item.id }}">
+                            Reset Password
+                        </button>
                         {% if user_item.username != current_user.username %}
                             <!-- Action Modal / Buttons -->
                             <div class="btn-group btn-group-sm" role="group">
@@ -111,7 +155,48 @@
                                     </div>
                                 </div>
                             </div>
+
+                            <div class="modal fade text-start" id="resetPasswordModal{{ user_item.id }}" tabindex="-1" aria-hidden="true">
+                                <div class="modal-dialog modal-dialog-centered">
+                                    <div class="modal-content">
+                                        <div class="modal-header">
+                                            <h5 class="modal-title fw-bold">Reset Password: {{ user_item.username }}</h5>
+                                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                        </div>
+                                        <form method="POST" action="{{ url_for('reset_password', user_id=user_item.id) }}">
+                                            <div class="modal-body">
+                                                <label for="new-password{{ user_item.id }}" class="form-label">New password</label>
+                                                <input type="password" class="form-control" id="new-password{{ user_item.id }}" name="new_password" required autocomplete="new-password">
+                                            </div>
+                                            <div class="modal-footer">
+                                                <button type="button" class="btn btn-light btn-sm" data-bs-dismiss="modal">Cancel</button>
+                                                <button type="submit" class="btn btn-warning btn-sm fw-semibold">Reset Password</button>
+                                            </div>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
                         {% else %}
+                            <div class="modal fade text-start" id="resetPasswordModal{{ user_item.id }}" tabindex="-1" aria-hidden="true">
+                                <div class="modal-dialog modal-dialog-centered">
+                                    <div class="modal-content">
+                                        <div class="modal-header">
+                                            <h5 class="modal-title fw-bold">Reset Password: {{ user_item.username }}</h5>
+                                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                        </div>
+                                        <form method="POST" action="{{ url_for('reset_password', user_id=user_item.id) }}">
+                                            <div class="modal-body">
+                                                <label for="new-password{{ user_item.id }}" class="form-label">New password</label>
+                                                <input type="password" class="form-control" id="new-password{{ user_item.id }}" name="new_password" required autocomplete="new-password">
+                                            </div>
+                                            <div class="modal-footer">
+                                                <button type="button" class="btn btn-light btn-sm" data-bs-dismiss="modal">Cancel</button>
+                                                <button type="submit" class="btn btn-warning btn-sm fw-semibold">Reset Password</button>
+                                            </div>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
                             <span class="text-muted small">N/A (Primary Admin)</span>
                         {% endif %}
                     </td>
