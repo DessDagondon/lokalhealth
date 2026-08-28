@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h2 class="fw-bold mb-0">Surveillance Dashboard</h2>
+        <p class="text-muted small">Epidemiological Risk Tiers & Case Overview</p>
+    </div>
+    <div>
+        <span class="badge bg-primary px-3 py-2">Barangay: {{ current_user.assigned_barangay or 'Citywide' }}</span>
+    </div>
+</div>
+
+<!-- Alert Level Banner -->
+{% if total_cases %}
+<div class="alert alert-info border-0 shadow-sm d-flex align-items-center mb-4" role="alert">
+    <div>
+        <h5 class="alert-heading mb-1 fw-bold">Surveillance data available</h5>
+        <small>Review the current case records for the latest local surveillance information.</small>
+    </div>
+</div>
+{% else %}
+<div class="alert alert-secondary border-0 shadow-sm d-flex align-items-center mb-4" role="status">
+    <div>
+        <h5 class="alert-heading mb-1 fw-bold">No active alert</h5>
+        <small>No case records are currently available for analysis.</small>
+    </div>
+</div>
+{% endif %}
+
+<!-- Key Metrics Cards -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm p-3">
+            <span class="text-muted small fw-bold">TOTAL CASES (YTD)</span>
+            <h2 class="fw-bold text-dark my-1">{{ total_cases }}</h2>
+            <span class="text-muted small">Imported and manually logged records</span>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm p-3">
+            <span class="text-muted small fw-bold">ACTIVE CLUSTERS</span>
+            <h2 class="fw-bold text-warning my-1">{{ clusters|length }}</h2>
+            <span class="text-muted small">Barangays represented in records</span>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm p-3">
+            <span class="text-muted small fw-bold">CONFIRMED DENGUE</span>
+            <h2 class="fw-bold text-primary my-1">{{ confirmed_cases }}</h2>
+            <span class="text-muted small">Records marked confirmed</span>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-0 shadow-sm p-3">
+            <span class="text-muted small fw-bold">PENDING LOCAL SYNC</span>
+            <h2 class="fw-bold text-success my-1">0</h2>
+                <span class="text-muted small">No unsynced records tracked</span>
+        </div>
+    </div>
+</div>
+
+<!-- Analytics & Map Layout -->
+<div class="row g-3">
+    <div class="col-md-8">
+        <div class="card border-0 shadow-sm p-4 h-100">
+            <h5 class="fw-bold mb-3">Morbidity Week Trends</h5>
+            <div class="bg-light rounded d-flex align-items-center justify-content-center" style="height: 300px;">
+                <p class="text-muted">No morbidity data available</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm p-4 h-100">
+            <h5 class="fw-bold mb-3">Risk Distribution</h5>
+            <div class="list-group list-group-flush">
+                {% for barangay in clusters %}
+                <div class="list-group-item d-flex justify-content-between align-items-center bg-transparent px-0">
+                    <span>{{ barangay }}</span>
+                    <span class="badge bg-secondary">No risk rating</span>
+                </div>
+                {% else %}
+                <p class="text-muted mb-0">No risk distribution available</p>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

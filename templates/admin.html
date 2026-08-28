@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="mb-4">
+    <h2 class="fw-bold mb-0">System Administration</h2>
+    <p class="text-muted small">Manage Registered Accounts & Granular Access Permissions</p>
+</div>
+
+<div class="card border-0 shadow-sm p-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="fw-bold mb-0">Registered Users & Permissions</h5>
+        <span class="badge bg-light text-dark border">Total Accounts: {{ users|length }}</span>
+    </div>
+
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead class="table-light">
+                <tr>
+                    <th>Username</th>
+                    <th>System Role</th>
+                    <th>Allowed Actions</th>
+                    <th>Account Status</th>
+                    <th class="text-end">Manage Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user_item in users %}
+                <tr>
+                    <td class="fw-bold">
+                        {{ user_item.username }}
+                        {% if user_item.username == current_user.username %}
+                            <span class="badge bg-info text-dark ms-1">You</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <span class="badge {% if user_item.role == 'Admin' %}bg-danger{% else %}bg-primary{% endif %}">
+                            {{ user_item.role or 'User' }}
+                        </span>
+                    </td>
+                    <td>
+                        <!-- Granular Action Badges -->
+                        <div class="d-flex gap-1 flex-wrap">
+                            <span class="badge bg-light text-dark border">View</span>
+                            {% if user_item.can_create %}
+                                <span class="badge bg-success-subtle text-success border border-success">Create</span>
+                            {% endif %}
+                            {% if user_item.can_edit %}
+                                <span class="badge bg-warning-subtle text-warning border border-warning">Edit</span>
+                            {% endif %}
+                            {% if user_item.can_delete %}
+                                <span class="badge bg-danger-subtle text-danger border border-danger">Delete</span>
+                            {% endif %}
+                        </div>
+                    </td>
+                    <td>
+                        {% if user_item.is_blocked %}
+                            <span class="badge bg-danger">Blocked</span>
+                        {% else %}
+                            <span class="badge bg-success">Active</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-end">
+                        {% if user_item.username != current_user.username %}
+                            <!-- Action Modal / Buttons -->
+                            <div class="btn-group btn-group-sm" role="group">
+                                <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editPermissionsModal{{ user_item.id }}">
+                                    Edit Permissions
+                                </button>
+                                
+                                <form method="POST" action="{{ url_for('toggle_block', user_id=user_item.id) }}" class="d-inline">
+                                    {% if user_item.is_blocked %}
+                                        <button type="submit" class="btn btn-outline-success">Unblock</button>
+                                    {% else %}
+                                        <button type="submit" class="btn btn-outline-danger">Block</button>
+                                    {% endif %}
+                                </form>
+                            </div>
+
+                            <!-- Modal for Editing Permissions -->
+                            <div class="modal fade text-start" id="editPermissionsModal{{ user_item.id }}" tabindex="-1" aria-hidden="true">
+                                <div class="modal-dialog modal-dialog-centered">
+                                    <div class="modal-content">
+                                        <div class="modal-header">
+                                            <h5 class="modal-title fw-bold">Permissions: {{ user_item.username }}</h5>
+                                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                        </div>
+                                        <form method="POST" action="{{ url_for('update_permissions', user_id=user_item.id) }}">
+                                            <div class="modal-body">
+                                                <p class="text-muted small">Toggle the operations this user is allowed to perform across the application:</p>
+                                                
+                                                <div class="form-check form-switch mb-2">
+                                                    <input class="form-check-input" type="checkbox" id="can_create{{ user_item.id }}" name="can_create" {% if user_item.can_create %}checked{% endif %}>
+                                                    <label class="form-check-label fw-semibold" for="can_create{{ user_item.id }}">Can Create / Ingest Records</label>
+                                                </div>
+
+                                                <div class="form-check form-switch mb-2">
+                                                    <input class="form-check-input" type="checkbox" id="can_edit{{ user_item.id }}" name="can_edit" {% if user_item.can_edit %}checked{% endif %}>
+                                                    <label class="form-check-label fw-semibold" for="can_edit{{ user_item.id }}">Can Edit Existing Records</label>
+                                                </div>
+
+                                                <div class="form-check form-switch mb-2">
+                                                    <input class="form-check-input" type="checkbox" id="can_delete{{ user_item.id }}" name="can_delete" {% if user_item.can_delete %}checked{% endif %}>
+                                                    <label class="form-check-label fw-semibold" for="can_delete{{ user_item.id }}">Can Delete Case Records</label>
+                                                </div>
+                                            </div>
+                                            <div class="modal-footer">
+                                                <button type="button" class="btn btn-light btn-sm" data-bs-dismiss="modal">Cancel</button>
+                                                <button type="submit" class="btn btn-primary btn-sm fw-semibold">Save Changes</button>
+                                            </div>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+                        {% else %}
+                            <span class="text-muted small">N/A (Primary Admin)</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="5" class="text-center text-muted py-4">No registered users found.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

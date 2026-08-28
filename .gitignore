@@ -1,0 +1,17 @@
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# Database files (Don't commit local user data/databases)
+*.db
+*.sqlite3
+instance/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+
+# VS Code & Environment variables
+.vscode/
+.env

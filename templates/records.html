@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h2 class="fw-bold mb-0">Case Records Management</h2>
+        <p class="text-muted small">Point-of-Care Logging & Historical Dataset Ingestion</p>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    {% if current_user.can_create or current_user.role == 'Admin' %}
+        <!-- Manual Entry Form -->
+        <div class="col-md-5">
+            <div class="card border-0 shadow-sm p-4">
+                <h5 class="fw-bold mb-3">Log New Dengue Case</h5>
+                <form method="POST" action="{{ url_for('records') }}">
+                    <div class="mb-3">
+                        <label for="case_id" class="form-label small fw-bold">Case ID (Anonymized)</label>
+                        <input type="text" class="form-control" id="case_id" name="case_id" placeholder="e.g. TAL-2026-001" required>
+                    </div>
+                    
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label for="morbidity_month" class="form-label small fw-bold">Month (1-12)</label>
+                            <input type="number" class="form-control" id="morbidity_month" name="morbidity_month" min="1" max="12" placeholder="e.g. 5" required>
+                        </div>
+                        <div class="col-6">
+                            <label for="morbidity_week" class="form-label small fw-bold">Week (1-52)</label>
+                            <input type="number" class="form-control" id="morbidity_week" name="morbidity_week" min="1" max="52" placeholder="e.g. 18">
+                        </div>
+                    </div>
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label for="age" class="form-label small fw-bold">Age</label>
+                            <input type="number" class="form-control" id="age" name="age" placeholder="Years" required>
+                        </div>
+                        <div class="col-6">
+                            <label for="sex" class="form-label small fw-bold">Sex</label>
+                            <select class="form-select" id="sex" name="sex" required>
+                                <option value="M">Male</option>
+                                <option value="F">Female</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="barangay" class="form-label small fw-bold">Barangay</label>
+                        <input type="text" class="form-control" id="barangay" name="barangay" placeholder="e.g. Talomo Proper" required>
+                    </div>
+
+                    <div class="mb-4">
+                        <label for="clinical_classification" class="form-label small fw-bold">Clinical Classification</label>
+                        <select class="form-select" id="clinical_classification" name="clinical_classification">
+                            <option value="Dengue without Warning Signs">Dengue without Warning Signs</option>
+                            <option value="Dengue with Warning Signs">Dengue with Warning Signs</option>
+                            <option value="Severe Dengue">Severe Dengue</option>
+                        </select>
+                    </div>
+
+                    <button type="submit" name="manual_entry" class="btn btn-primary w-100 fw-semibold">Save Record</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Excel & CSV Ingestion Section -->
+        <div class="col-md-7">
+            <div class="card border-0 shadow-sm p-4 mb-4">
+                <h5 class="fw-bold mb-2">Batch Dataset Upload (.xlsx / .csv)</h5>
+                <p class="text-muted small mb-3">Import surveillance datasets directly into SQLite without manual file conversion.</p>
+                
+                <form method="POST" action="{{ url_for('records') }}" enctype="multipart/form-data">
+                    <div class="mb-3">
+                        <label for="dataset-file" class="form-label small fw-bold">Choose dataset file</label>
+                        <input type="file" class="form-control" id="dataset-file" name="file" accept=".xlsx,.csv" required>
+                    </div>
+                    <button class="btn btn-primary fw-semibold" type="submit">Upload File</button>
+                    <div class="d-flex justify-content-between align-items-center mt-2">
+                        <small class="text-muted">Formats: <strong>Microsoft Excel (.xlsx)</strong> or <strong>CSV (.csv)</strong></small>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Recent Records Table -->
+            <div class="card border-0 shadow-sm p-4">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="fw-bold mb-0">Recent Ingested Records</h5>
+                    <a href="{{ url_for('download_cases_csv') }}" class="btn btn-sm btn-outline-secondary">Export Dataset</a>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle small">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Case ID</th>
+                                <th>Barangay</th>
+                                <th>Age/Sex</th>
+                                <th>Classification</th>
+                                <th>Sync</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for record in records %}
+                            <tr>
+                                <td class="fw-bold">{{ record.case_id }}</td>
+                                <td>{{ record.barangay }}</td>
+                                <td>{{ record.age }} / {{ record.sex }}</td>
+                                <td>{{ record.clinical_classification }}</td>
+                                <td><span class="badge bg-success">{{ record.sync_status }}</span></td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="5" class="text-center text-muted py-4">No records logged yet. Upload an Excel/CSV file or add a case manually.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    {% else %}
+        <!-- Read-Only View for Viewers -->
+        <div class="col-12">
+            <div class="alert alert-info border-0 shadow-sm mb-4">
+                <div class="d-flex align-items-center">
+                    <div>
+                        <h6 class="fw-bold mb-1">Read-Only Viewer Access</h6>
+                        <p class="mb-0 small">You are logged in with <strong>Viewer</strong> privileges. You can browse and export surveillance data below, but creating or uploading records requires an elevated role assigned by an administrator.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card border-0 shadow-sm p-4">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="fw-bold mb-0">Ingested Case Records</h5>
+                    <a href="{{ url_for('download_cases_csv') }}" class="btn btn-sm btn-primary">Export Dataset (CSV)</a>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle small">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Case ID</th>
+                                <th>Barangay</th>
+                                <th>Age/Sex</th>
+                                <th>Classification</th>
+                                <th>Sync</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for record in records %}
+                            <tr>
+                                <td class="fw-bold">{{ record.case_id }}</td>
+                                <td>{{ record.barangay }}</td>
+                                <td>{{ record.age }} / {{ record.sex }}</td>
+                                <td>{{ record.clinical_classification }}</td>
+                                <td><span class="badge bg-success">{{ record.sync_status }}</span></td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="5" class="text-center text-muted py-4">No records currently available in the database.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

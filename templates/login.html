@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row justify-content-center mt-5">
+    <div class="col-md-5">
+        <div class="card shadow-sm border-0">
+            <div class="card-body p-4">
+                <h3 class="card-title text-center mb-1 fw-bold">LokalHealth</h3>
+                <p class="text-muted text-center small mb-4">Dengue Surveillance & Decision Support</p>
+                
+                <form method="POST" action="{{ url_for('login') }}">
+                    <div class="mb-3">
+                        <label for="username" class="form-label">Username</label>
+                        <input type="text" class="form-control" id="username" name="username" required placeholder="Enter username">
+                    </div>
+                    <div class="mb-4">
+                        <label for="password" class="form-label">Password</label>
+                        <input type="password" class="form-control" id="password" name="password" required placeholder="Enter password">
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100 py-2">Sign In</button>
+                </form>
+                <p class="text-center text-muted small mt-4 mb-0">
+                    Need an account? <a href="{{ url_for('signup') }}">Create one</a>
+                </p>
+            </div>
+            <div class="card-footer bg-white text-center text-muted small py-3">
+                Default Credentials: <strong>admin</strong> / <strong>Admin123!</strong>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="mb-4">
+    <h2 class="fw-bold mb-0">Automated Export Hub</h2>
+    <p class="text-muted small">Generate Epidemiological Reports for Health Authorities</p>
+</div>
+
+<div class="row g-4">
+    <div class="col-md-6">
+        <div class="card border-0 shadow-sm p-4">
+            <h5 class="fw-bold mb-2">Monthly Epidemiological Summary (PDF)</h5>
+            <p class="text-muted small mb-4">Consolidated report on case trends, morbidity week distributions, and active alert tiers.</p>
+            <a class="btn btn-outline-primary fw-semibold" href="{{ url_for('download_summary_pdf') }}">Download PDF Summary</a>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card border-0 shadow-sm p-4">
+            <h5 class="fw-bold mb-2">Raw Anonymized Case Data (CSV)</h5>
+            <p class="text-muted small mb-4">Export full anonymized dataset strictly compliant with RA 10173 Data Privacy guidelines.</p>
+            <div class="d-flex gap-2 flex-wrap">
+                <a class="btn btn-outline-success fw-semibold" href="{{ url_for('download_cases_csv') }}">Export CSV Dataset</a>
+                <a class="btn btn-outline-success fw-semibold" href="{{ url_for('download_cases_excel') }}">Export Excel (.xlsx)</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
