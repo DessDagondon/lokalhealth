@@ -1,10 +1,11 @@
 import os
+import re
 from io import BytesIO, StringIO
 from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, flash, send_file
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
-from sqlalchemy import text
+from sqlalchemy import text, or_
 from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
@@ -25,7 +26,7 @@ class User(UserMixin, db.Model):
     username = db.Column(db.String(80), unique=True, nullable=False)
     password_hash = db.Column(db.String(120), nullable=False)
     role = db.Column(db.String(20), default='Viewer') # Default role on sign up
-    
+
     # Granular Permission Flags (Viewer defaults: read/export only)
     can_create = db.Column(db.Boolean, default=False) # Blocked from manual entry & uploads
     can_edit = db.Column(db.Boolean, default=False)
@@ -105,22 +106,132 @@ def logout():
 @app.route('/dashboard')
 @login_required
 def dashboard():
+    page = request.args.get('page', 1, type=int)
+    page = max(page, 1)
+
     records_list = DengueRecord.query.all()
-    confirmed_cases = sum(
-        1 for record in records_list
-        if (record.case_classification or '').strip().lower() == 'confirmed'
-    )
+    confirmed_cases = DengueRecord.query.filter(
+        db.func.lower(DengueRecord.case_classification).contains('confirmed')
+    ).count()
     clusters = sorted({record.barangay for record in records_list if record.barangay})
+    per_page = 10
+    total_clusters = len(clusters)
+    total_pages = max(1, (total_clusters + per_page - 1) // per_page) if clusters else 1
+    page = min(page, total_pages)
+    start = (page - 1) * per_page
+    end = start + per_page
+    cluster_page = clusters[start:end]
+
+    week_counts = db.session.query(
+        DengueRecord.morbidity_week,
+        db.func.count(DengueRecord.id)
+    ).filter(DengueRecord.morbidity_week.isnot(None)).group_by(DengueRecord.morbidity_week).all()
+    week_counts_map = {int(week): count for week, count in week_counts if week is not None and 1 <= int(week) <= 52}
+    morbidity_week_trends = [
+        {'week': week, 'count': week_counts_map.get(week, 0)}
+        for week in range(1, 53)
+    ]
+
     return render_template(
         'dashboard.html',
         user=current_user,
         total_cases=len(records_list),
         confirmed_cases=confirmed_cases,
-        clusters=clusters,
+        clusters=cluster_page,
+        all_clusters=clusters,
+        total_clusters=total_clusters,
+        page=page,
+        total_pages=total_pages,
+        morbidity_week_trends=morbidity_week_trends,
     )
 
 # Screen 3: Data Entry, CSV Ingestion, and Offline Sync
 import pandas as pd
+
+
+def normalize_upload_header(value):
+    text = str(value).strip().lower()
+    text = text.replace('(', '').replace(')', '').replace('-', '_').replace('/', '_')
+    text = text.replace(' ', '_').replace('.', '').replace('&', 'and')
+    while '__' in text:
+        text = text.replace('__', '_')
+    return text.strip('_')
+
+
+def estimate_morbidity_week(month_value):
+    month = safe_int(month_value, default=None)
+    if month is None:
+        return None
+    if month < 1:
+        return None
+    return max(1, min(52, (month * 4) - 2))
+
+
+def build_standardized_upload_df(df):
+    if df is None or df.empty:
+        return df
+
+    normalized_columns = {normalize_upload_header(column): column for column in df.columns}
+
+    age_candidates = ['age_in_years', 'ageyears', 'age']
+    age_source = next((normalized_columns[c] for c in age_candidates if c in normalized_columns), None)
+    if age_source is not None:
+        df['age'] = pd.to_numeric(df[age_source], errors='coerce').fillna(0).astype(int)
+    else:
+        df['age'] = 0
+
+    rename_map = {
+        'case_id': 'case_id',
+        'case_code': 'case_id',
+        'caseid': 'case_id',
+        'morbidity_month': 'morbidity_month',
+        'morbidity_week': 'morbidity_week',
+        'mw': 'morbidity_week',
+        'morbidity_week_number': 'morbidity_week',
+        'district': 'district',
+        'barangay': 'barangay',
+        'current_address_barangay': 'barangay',
+        'sex': 'sex',
+        'clinical_classification': 'clinical_classification',
+        'clinclass': 'clinical_classification',
+        'case_classification': 'case_classification',
+        'classification': 'case_classification',
+    }
+
+    for original_name, standardized_name in rename_map.items():
+        if original_name in normalized_columns:
+            df = df.rename(columns={normalized_columns[original_name]: standardized_name})
+
+    if 'case_id' not in df.columns:
+        df['case_id'] = None
+    if 'morbidity_month' not in df.columns:
+        df['morbidity_month'] = None
+    if 'morbidity_week' not in df.columns:
+        df['morbidity_week'] = None
+    if 'district' not in df.columns:
+        df['district'] = 'Unavailable'
+    if 'barangay' not in df.columns:
+        df['barangay'] = 'Unavailable'
+    if 'sex' not in df.columns:
+        df['sex'] = 'Unavailable'
+    if 'clinical_classification' not in df.columns:
+        df['clinical_classification'] = 'Unavailable'
+    if 'case_classification' not in df.columns:
+        df['case_classification'] = None
+
+    df['morbidity_week'] = df.apply(
+        lambda row: safe_int(row.get('morbidity_week'))
+        if row.get('morbidity_week') is not None and not pd.isna(row.get('morbidity_week'))
+        else estimate_morbidity_week(row.get('morbidity_month')),
+        axis=1,
+    )
+
+    final_columns = [
+        'case_id', 'morbidity_month', 'morbidity_week', 'district', 'barangay', 'age',
+        'sex', 'clinical_classification', 'case_classification'
+    ]
+    return df[final_columns].copy()
+
 
 def safe_int(value, default=None):
     if value is None or pd.isna(value):
@@ -133,52 +244,76 @@ def safe_int(value, default=None):
     except (TypeError, ValueError, OverflowError):
         return default
 
+
 @app.route('/records', methods=['GET', 'POST'])
 @login_required
 def records():
+    page = request.args.get('page', 1, type=int)
+    page = max(page, 1)
+
     if request.method == 'POST':
         file = request.files.get('file')
         if file is not None:
-            filename = file.filename or ''
+            filename = (file.filename or '').strip()
             if filename.lower().endswith(('.csv', '.xlsx')):
                 try:
+                    file.stream.seek(0)
                     # Read either Excel or CSV seamlessly using Pandas
                     if filename.lower().endswith('.xlsx'):
-                        df = pd.read_excel(file)
+                        df = pd.read_excel(file, engine='openpyxl')
                     else:
-                        df = pd.read_csv(file)
+                        df = pd.read_csv(file, dtype=str, keep_default_na=True)
 
-                    # Normalize column names to lowercase/trimmed to prevent minor template errors
-                    df.columns = [str(c).strip().lower().replace(' ', '_') for c in df.columns]
+                    if df.empty:
+                        raise ValueError('The uploaded file contains no data rows.')
+
+                    df = build_standardized_upload_df(df)
+
+                    with db.session.no_autoflush:
+                        existing_case_ids = {
+                            case_id for (case_id,) in db.session.query(DengueRecord.case_id).all()
+                        }
 
                     # Loop through rows and insert into database
                     added_count = 0
                     for _, row in df.iterrows():
+                        if row.isnull().all():
+                            continue
+
                         # Generates fallback anonymized case_id if missing in file
                         case_id_value = row.get('case_id')
-                        case_id_val = str(case_id_value).strip() if pd.notnull(case_id_value) else ''
-                        if not case_id_val or case_id_val.upper() in {'#REF!', '#VALUE!', '#N/A', 'N/A', 'NAN'}:
+                        case_id_val = '' if pd.isna(case_id_value) else str(case_id_value).strip()
+                        if not case_id_val or case_id_val.upper() in {'#REF!', '#VALUE!', '#N/A', 'N/A', 'NAN', 'NULL'}:
                             case_id_val = f"GEN-{added_count+1000}"
-                        
-                        # Prevent duplicate case records
-                        if not DengueRecord.query.filter_by(case_id=case_id_val).first():
-                            record = DengueRecord(
-                                case_id=case_id_val,
-                                morbidity_month=safe_int(row.get('morbidity_month'), 1),
-                                morbidity_week=safe_int(row.get('morbidity_week')),
-                                district=str(row.get('district', 'Talomo')),
-                                barangay=str(row.get('barangay', 'Unknown')),
-                                age=safe_int(row.get('age'), 0),
-                                sex=str(row.get('sex', 'U')),
-                                clinical_classification=str(row.get('clinical_classification', 'Unspecified')),
-                                sync_status='Synced'
-                            )
-                            db.session.add(record)
-                            added_count += 1
+
+                        # Preserve real data even if similar case IDs repeat inside the same upload or already exist.
+                        candidate_case_id = case_id_val
+                        duplicate_index = 1
+                        while candidate_case_id in existing_case_ids:
+                            candidate_case_id = f"{case_id_val}-{duplicate_index}"
+                            duplicate_index += 1
+
+                        record = DengueRecord(
+                            case_id=candidate_case_id,
+                            morbidity_month=safe_int(row.get('morbidity_month'), 1),
+                            morbidity_week=safe_int(row.get('morbidity_week')) or estimate_morbidity_week(row.get('morbidity_month')),
+                            district=str(row.get('district') or 'Unavailable').strip() or 'Unavailable',
+                            barangay=str(row.get('barangay') or 'Unavailable').strip() or 'Unavailable',
+                            age=safe_int(row.get('age'), 0),
+                            sex=str(row.get('sex') or 'Unavailable').strip().upper()[:1] if str(row.get('sex') or 'Unavailable').strip() else 'Unavailable',
+                            clinical_classification=str(row.get('clinical_classification') or 'Unavailable').strip() or 'Unavailable',
+                            case_classification=str(row.get('case_classification') or '').strip() or None,
+                            sync_status='Synced'
+                        )
+                        db.session.add(record)
+                        existing_case_ids.add(candidate_case_id)
+                        added_count += 1
 
                     db.session.commit()
                     flash(f'Successfully imported {added_count} new records from {filename}!', 'info')
+                    page = 1
                 except Exception as e:
+                    db.session.rollback()
                     flash(f'Error processing file: {str(e)}', 'error')
             else:
                 flash('Choose an Excel (.xlsx) or CSV (.csv) file before uploading.', 'error')
@@ -197,12 +332,13 @@ def records():
                 db.session.add(record)
                 db.session.commit()
                 flash('Dengue case saved successfully.', 'info')
+                page = 1
             except Exception as e:
                 db.session.rollback()
                 flash(f'Could not save record: {str(e)}', 'error')
 
-    records_list = DengueRecord.query.all()
-    return render_template('records.html', user=current_user, records=records_list)
+    records_page = DengueRecord.query.order_by(DengueRecord.id.desc()).paginate(page=page, per_page=10, error_out=False)
+    return render_template('records.html', user=current_user, records=records_page)
 
 # Screen 4: Automated PDF/CSV Export Hub
 @app.route('/reports')
@@ -409,9 +545,8 @@ def init_db():
         # Seed default administrative account if not exists
         if not User.query.filter_by(username='admin').first():
             default_admin = User(
-                username='admin', 
-                role='Admin', 
-                assigned_barangay='Citywide'
+                username='admin',
+                role='Admin'
             )
             default_admin.set_password('Admin123!')
             db.session.add(default_admin)
@@ -422,6 +557,29 @@ def migrate_user_table():
     existing_columns = {
         column['name'] for column in db.inspect(db.engine).get_columns('user')
     }
+
+    if 'assigned_barangay' in existing_columns:
+        with db.engine.begin() as connection:
+            connection.execute(text('ALTER TABLE "user" RENAME TO user_legacy'))
+            connection.execute(text('''
+                CREATE TABLE "user" (
+                    id INTEGER NOT NULL PRIMARY KEY,
+                    username VARCHAR(80) NOT NULL UNIQUE,
+                    password_hash VARCHAR(120) NOT NULL,
+                    role VARCHAR(20),
+                    can_create BOOLEAN DEFAULT 0,
+                    can_edit BOOLEAN DEFAULT 0,
+                    can_delete BOOLEAN DEFAULT 0,
+                    is_blocked BOOLEAN DEFAULT 0
+                )
+            '''))
+            connection.execute(text('''
+                INSERT INTO "user" (id, username, password_hash, role, can_create, can_edit, can_delete, is_blocked)
+                SELECT id, username, password_hash, role, can_create, can_edit, can_delete, is_blocked
+                FROM user_legacy
+            '''))
+            connection.execute(text('DROP TABLE user_legacy'))
+
     permission_columns = {
         'can_create': 'BOOLEAN DEFAULT 0',
         'can_edit': 'BOOLEAN DEFAULT 0',
@@ -431,7 +589,7 @@ def migrate_user_table():
 
     with db.engine.begin() as connection:
         for column_name, column_definition in permission_columns.items():
-            if column_name not in existing_columns:
+            if column_name not in existing_columns and column_name not in {column['name'] for column in db.inspect(db.engine).get_columns('user')}:
                 connection.execute(text(
                     f'ALTER TABLE "user" ADD COLUMN {column_name} {column_definition}'
                 ))
