@@ -17,6 +17,12 @@ db = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
+
+@app.before_request
+def ensure_admin_on_every_request():
+    ensure_primary_admin_account()
+
+
 # ==========================================
 # DATABASE SCHEMAS (RA 10173 & RBAC ALIGNED)
 # ==========================================
@@ -42,6 +48,7 @@ class User(UserMixin, db.Model):
 class DengueRecord(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     case_id = db.Column(db.String(50), unique=True, nullable=False)  # Anonymized ID
+    year = db.Column(db.Integer, nullable=True, default=datetime.now().year)
     morbidity_month = db.Column(db.Integer, nullable=False)
     morbidity_week = db.Column(db.Integer, nullable=True)
     district = db.Column(db.String(100), nullable=False, default='Talomo')
@@ -51,6 +58,38 @@ class DengueRecord(db.Model):
     clinical_classification = db.Column(db.String(100), nullable=True)
     case_classification = db.Column(db.String(100), nullable=True)
     sync_status = db.Column(db.String(20), default='Synced')  # 'Local' or 'Synced'
+
+
+def ensure_primary_admin_account():
+    try:
+        with app.app_context():
+            existing = User.query.filter_by(username='admin').first()
+            if existing is None:
+                user = User(
+                    username='admin',
+                    role='Admin',
+                    can_create=True,
+                    can_edit=True,
+                    can_delete=True,
+                    is_blocked=False,
+                )
+                user.set_password('Admin123!')
+                db.session.add(user)
+                db.session.commit()
+                return True
+
+            existing.role = 'Admin'
+            existing.can_create = True
+            existing.can_edit = True
+            existing.can_delete = True
+            existing.is_blocked = False
+            existing.set_password('Admin123!')
+            db.session.commit()
+            return True
+    except Exception:
+        db.session.rollback()
+        return False
+
 
 @login_manager.user_loader
 def load_user(user_id):
@@ -68,6 +107,8 @@ def index():
 # Screen 1: Login & Sign Up Authentication
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    ensure_primary_admin_account()
+
     if current_user.is_authenticated:
         return redirect(url_for('dashboard'))
 
@@ -151,11 +192,30 @@ import pandas as pd
 
 def normalize_upload_header(value):
     text = str(value).strip().lower()
+    text = text.replace('\ufeff', '')
     text = text.replace('(', '').replace(')', '').replace('-', '_').replace('/', '_')
     text = text.replace(' ', '_').replace('.', '').replace('&', 'and')
     while '__' in text:
         text = text.replace('__', '_')
     return text.strip('_')
+
+
+def find_first_matching_column(columns, candidates):
+    normalized_map = {normalize_upload_header(column): column for column in columns}
+    for candidate in candidates:
+        if candidate in normalized_map:
+            return normalized_map[candidate]
+    return None
+
+
+def coalesce_text(value, fallback='Unavailable'):
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return fallback
+    text = str(value).strip()
+    normalized = text.lower()
+    if normalized in {'', 'nan', 'n/a', 'na', '#ref!', '#value!', 'null', 'none'}:
+        return fallback
+    return text or fallback
 
 
 def estimate_morbidity_week(month_value):
@@ -167,82 +227,243 @@ def estimate_morbidity_week(month_value):
     return max(1, min(52, (month * 4) - 2))
 
 
-def build_standardized_upload_df(df):
-    if df is None or df.empty:
-        return df
+def detect_upload_year(df=None, filename=''):
+    if df is not None:
+        for column in df.columns:
+            candidate = normalize_upload_header(column)
+            if candidate in {'year', 'morbidity_year', 'report_year', 'epidemiologic_year', 'calendar_year', 'yr'}:
+                year_values = pd.to_numeric(df[column], errors='coerce').dropna()
+                if not year_values.empty:
+                    return int(year_values.iloc[0])
 
+    year_match = re.search(r'(19\d{2}|20\d{2})', str(filename or ''))
+    if year_match:
+        return int(year_match.group(1))
+
+    return datetime.now().year
+
+
+def is_generic_case_id(value):
+    if value is None:
+        return True
+    text = str(value).strip().lower()
+    if not text:
+        return True
+    generic_values = {'dengue', 'a90', 'a91', 'unavailable', 'n/a', 'na', 'nan', 'null', 'none'}
+    return text in generic_values or text.startswith('dengue')
+
+
+def build_standardized_upload_df(df, filename=''):
+    if df is None or df.empty:
+        return pd.DataFrame(columns=[
+            'year', 'case_id', 'morbidity_month', 'morbidity_week', 'district', 'barangay',
+            'age', 'sex', 'clinical_classification'
+        ])
+
+    df = df.copy()
+    df = df.dropna(how='all').reset_index(drop=True)
+    if df.empty:
+        return pd.DataFrame(columns=[
+            'year', 'case_id', 'morbidity_month', 'morbidity_week', 'district', 'barangay',
+            'age', 'sex', 'clinical_classification'
+        ])
+
+    upload_year = detect_upload_year(df, filename)
     normalized_columns = {normalize_upload_header(column): column for column in df.columns}
+    year_candidates = ['year', 'morbidity_year', 'report_year', 'epidemiologic_year', 'calendar_year', 'yr']
+    year_source = next((normalized_columns[c] for c in year_candidates if c in normalized_columns), None)
+    if year_source is not None:
+        df['year'] = pd.to_numeric(df[year_source], errors='coerce')
+    else:
+        df['year'] = upload_year
+
+    df['year'] = df['year'].apply(lambda value: int(value) if pd.notna(value) and str(value).strip() not in {'', 'nan', 'n/a', 'na', 'null', 'none'} else upload_year)
 
     age_candidates = ['age_in_years', 'ageyears', 'age']
     age_source = next((normalized_columns[c] for c in age_candidates if c in normalized_columns), None)
     if age_source is not None:
-        df['age'] = pd.to_numeric(df[age_source], errors='coerce').fillna(0).astype(int)
+        df['age'] = pd.to_numeric(df[age_source], errors='coerce')
     else:
-        df['age'] = 0
+        df['age'] = pd.Series([None] * len(df), index=df.index)
 
-    rename_map = {
-        'case_id': 'case_id',
-        'case_code': 'case_id',
-        'caseid': 'case_id',
-        'morbidity_month': 'morbidity_month',
-        'morbidity_week': 'morbidity_week',
-        'mw': 'morbidity_week',
-        'morbidity_week_number': 'morbidity_week',
-        'district': 'district',
-        'barangay': 'barangay',
-        'current_address_barangay': 'barangay',
-        'sex': 'sex',
-        'clinical_classification': 'clinical_classification',
-        'clinclass': 'clinical_classification',
-        'case_classification': 'case_classification',
-        'classification': 'case_classification',
-    }
+    def safe_age(value):
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return 0
+        text = str(value).strip().lower()
+        if text in {'', 'nan', 'n/a', 'na', 'null', 'none'}:
+            return 0
+        try:
+            return int(float(value))
+        except (TypeError, ValueError, OverflowError):
+            return 0
 
-    for original_name, standardized_name in rename_map.items():
-        if original_name in normalized_columns:
-            df = df.rename(columns={normalized_columns[original_name]: standardized_name})
+    df['age'] = df['age'].apply(safe_age)
 
-    if 'case_id' not in df.columns:
-        df['case_id'] = None
-    if 'morbidity_month' not in df.columns:
-        df['morbidity_month'] = None
-    if 'morbidity_week' not in df.columns:
-        df['morbidity_week'] = None
-    if 'district' not in df.columns:
-        df['district'] = 'Unavailable'
-    if 'barangay' not in df.columns:
-        df['barangay'] = 'Unavailable'
-    if 'sex' not in df.columns:
-        df['sex'] = 'Unavailable'
-    if 'clinical_classification' not in df.columns:
-        df['clinical_classification'] = 'Unavailable'
-    if 'case_classification' not in df.columns:
-        df['case_classification'] = None
+    case_id_source = find_first_matching_column(df.columns, ['case_code', 'case_id', 'caseid'])
+    month_source = find_first_matching_column(df.columns, ['morbidity_month', 'morbiditymonth', 'month'])
+    week_source = find_first_matching_column(df.columns, ['morbidity_week', 'mw'])
+    district_source = find_first_matching_column(df.columns, ['district'])
+    barangay_source = find_first_matching_column(df.columns, [
+        'barangay', 'current_address_barangay', 'permanent_address_barangay', 'current_address_barangay2'
+    ])
+    sex_source = find_first_matching_column(df.columns, ['sex'])
+    clinical_source = find_first_matching_column(df.columns, ['clinical_classification', 'clinclass'])
 
-    df['morbidity_week'] = df.apply(
-        lambda row: safe_int(row.get('morbidity_week'))
-        if row.get('morbidity_week') is not None and not pd.isna(row.get('morbidity_week'))
-        else estimate_morbidity_week(row.get('morbidity_month')),
-        axis=1,
+    def resolve_text_source(source_name, fallback='Unavailable'):
+        if source_name is None or source_name not in df.columns:
+            return pd.Series([fallback] * len(df), index=df.index)
+        return df[source_name].apply(lambda value: coalesce_text(value, fallback))
+
+    df['morbidity_week'] = pd.to_numeric(df[week_source], errors='coerce') if week_source else pd.Series([None] * len(df), index=df.index)
+    df['morbidity_month'] = pd.to_numeric(df[month_source], errors='coerce') if month_source else pd.Series([None] * len(df), index=df.index)
+
+    missing_month_mask = df['morbidity_month'].isna() & df['morbidity_week'].notna()
+    if missing_month_mask.any():
+        df.loc[missing_month_mask, 'morbidity_month'] = ((df.loc[missing_month_mask, 'morbidity_week'] - 1) // 4.33 + 1).fillna(0).astype(int)
+
+    df['morbidity_month'] = df['morbidity_month'].apply(
+        lambda value: max(1, min(12, int(value))) if pd.notna(value) else 1
     )
 
+    missing_week_mask = df['morbidity_week'].isna() & df['morbidity_month'].notna()
+    if missing_week_mask.any():
+        df.loc[missing_week_mask, 'morbidity_week'] = df.loc[missing_week_mask, 'morbidity_month'].apply(estimate_morbidity_week)
+
+    df['morbidity_week'] = df['morbidity_week'].apply(
+        lambda value: int(value) if pd.notna(value) else None
+    )
+
+    if case_id_source is not None:
+        raw_case_ids = df[case_id_source].astype(str).str.strip()
+    else:
+        raw_case_ids = pd.Series([''] * len(df), index=df.index)
+
+    generated_case_ids = []
+    seen = {}
+    for idx, value in enumerate(raw_case_ids):
+        text = str(value).strip()
+        if text and not is_generic_case_id(text):
+            case_id = text
+        elif text and is_generic_case_id(text):
+            case_id = text.upper()
+        else:
+            case_id = f"{upload_year}-REC-{idx + 1:05d}"
+
+        if case_id in seen:
+            seen[case_id] += 1
+            case_id = f"{case_id}-{seen[case_id]}"
+        else:
+            seen[case_id] = 0
+        generated_case_ids.append(case_id)
+    df['case_id'] = generated_case_ids
+
+    df['district'] = resolve_text_source(district_source, fallback='Unavailable')
+    df['barangay'] = resolve_text_source(barangay_source, fallback='Unavailable')
+    df['sex'] = resolve_text_source(sex_source, fallback='Unavailable')
+    df['clinical_classification'] = resolve_text_source(clinical_source, fallback='Unavailable')
+
     final_columns = [
-        'case_id', 'morbidity_month', 'morbidity_week', 'district', 'barangay', 'age',
-        'sex', 'clinical_classification', 'case_classification'
+        'year', 'case_id', 'morbidity_month', 'morbidity_week', 'district', 'barangay',
+        'age', 'sex', 'clinical_classification'
     ]
-    return df[final_columns].copy()
+    df = df[final_columns].copy()
+
+    # Drop rows that are still entirely empty after normalization so footer/blank spreadsheet rows
+    # are not inserted as fake 'Unavailable' entries.
+    blank_mask = df.apply(
+        lambda row: row.dropna().astype(str).str.strip().str.lower().replace({'#ref!': '', '#value!': ''}).isin({'', 'nan', 'n/a', 'na', 'null', 'none', 'unavailable'}).all(),
+        axis=1,
+    )
+    return df.loc[~blank_mask].reset_index(drop=True)
 
 
 def safe_int(value, default=None):
     if value is None or pd.isna(value):
         return default
 
-    try:
-        if isinstance(value, str) and value.strip().upper() in {'#REF!', '#VALUE!', '#N/A', 'NA', 'N/A', ''}:
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if not cleaned or cleaned.lower() in {'#ref!', '#value!', '#n/a', 'n/a', 'na', 'nan', 'null', 'none'}:
             return default
+        try:
+            return int(float(cleaned))
+        except (TypeError, ValueError, OverflowError):
+            return default
+
+    try:
         return int(float(value))
     except (TypeError, ValueError, OverflowError):
         return default
+
+
+def read_upload_dataframe(file, filename):
+    file.seek(0)
+    if filename.lower().endswith('.xlsx'):
+        return pd.read_excel(file, engine='openpyxl')
+
+    raw_bytes = file.read()
+    if not raw_bytes:
+        raise ValueError('The uploaded file is empty.')
+
+    text_variants = []
+    for encoding in ['utf-8-sig', 'utf-16', 'utf-16-le', 'cp1252', 'latin-1']:
+        try:
+            text_variants.append(raw_bytes.decode(encoding))
+        except Exception:
+            continue
+
+    if not text_variants:
+        text_variants.append(raw_bytes.decode('utf-8', errors='replace'))
+
+    for text in text_variants:
+        nonempty_lines = [line for line in text.replace('\r', '\n').split('\n') if line.strip()]
+        if not nonempty_lines:
+            continue
+
+        candidate_seps = [',', ';', '\t', '|', ':']
+        try:
+            import csv
+            sample = '\n'.join(nonempty_lines[:20])
+            dialect = csv.Sniffer().sniff(sample, delimiters=';,\t|:')
+            candidate_seps.insert(0, dialect.delimiter)
+        except Exception:
+            pass
+
+        counts = {sep: sum(line.count(sep) for line in nonempty_lines[:20]) for sep in candidate_seps}
+        ordered_seps = [sep for sep, _ in sorted(counts.items(), key=lambda item: (-item[1], item[0]))]
+
+        for sep in dict.fromkeys(ordered_seps):
+            try:
+                df = pd.read_csv(
+                    StringIO(text),
+                    sep=sep,
+                    engine='python',
+                    dtype=str,
+                    keep_default_na=True,
+                    na_values=['', 'NA', 'N/A', 'NAN', 'NULL', 'None', 'null', 'none'],
+                    skip_blank_lines=True,
+                )
+                if not df.empty and len(df.columns) > 1:
+                    return df
+            except Exception:
+                continue
+
+        try:
+            df = pd.read_csv(
+                StringIO(text),
+                sep=None,
+                engine='python',
+                dtype=str,
+                keep_default_na=True,
+                na_values=['', 'NA', 'N/A', 'NAN', 'NULL', 'None', 'null', 'none'],
+                skip_blank_lines=True,
+            )
+            if not df.empty and len(df.columns) > 1:
+                return df
+        except Exception:
+            continue
+
+    raise ValueError('Unable to parse the uploaded CSV file. Please use a standard comma, semicolon, or tab-delimited file.')
 
 
 @app.route('/records', methods=['GET', 'POST'])
@@ -252,93 +473,160 @@ def records():
     page = max(page, 1)
 
     if request.method == 'POST':
-        file = request.files.get('file')
-        if file is not None:
-            filename = (file.filename or '').strip()
-            if filename.lower().endswith(('.csv', '.xlsx')):
-                try:
-                    file.stream.seek(0)
-                    # Read either Excel or CSV seamlessly using Pandas
-                    if filename.lower().endswith('.xlsx'):
-                        df = pd.read_excel(file, engine='openpyxl')
-                    else:
-                        df = pd.read_csv(file, dtype=str, keep_default_na=True)
-
-                    if df.empty:
-                        raise ValueError('The uploaded file contains no data rows.')
-
-                    df = build_standardized_upload_df(df)
-
-                    with db.session.no_autoflush:
-                        existing_case_ids = {
-                            case_id for (case_id,) in db.session.query(DengueRecord.case_id).all()
-                        }
-
-                    # Loop through rows and insert into database
-                    added_count = 0
-                    for _, row in df.iterrows():
-                        if row.isnull().all():
-                            continue
-
-                        # Generates fallback anonymized case_id if missing in file
-                        case_id_value = row.get('case_id')
-                        case_id_val = '' if pd.isna(case_id_value) else str(case_id_value).strip()
-                        if not case_id_val or case_id_val.upper() in {'#REF!', '#VALUE!', '#N/A', 'N/A', 'NAN', 'NULL'}:
-                            case_id_val = f"GEN-{added_count+1000}"
-
-                        # Preserve real data even if similar case IDs repeat inside the same upload or already exist.
-                        candidate_case_id = case_id_val
-                        duplicate_index = 1
-                        while candidate_case_id in existing_case_ids:
-                            candidate_case_id = f"{case_id_val}-{duplicate_index}"
-                            duplicate_index += 1
-
-                        record = DengueRecord(
-                            case_id=candidate_case_id,
-                            morbidity_month=safe_int(row.get('morbidity_month'), 1),
-                            morbidity_week=safe_int(row.get('morbidity_week')) or estimate_morbidity_week(row.get('morbidity_month')),
-                            district=str(row.get('district') or 'Unavailable').strip() or 'Unavailable',
-                            barangay=str(row.get('barangay') or 'Unavailable').strip() or 'Unavailable',
-                            age=safe_int(row.get('age'), 0),
-                            sex=str(row.get('sex') or 'Unavailable').strip().upper()[:1] if str(row.get('sex') or 'Unavailable').strip() else 'Unavailable',
-                            clinical_classification=str(row.get('clinical_classification') or 'Unavailable').strip() or 'Unavailable',
-                            case_classification=str(row.get('case_classification') or '').strip() or None,
-                            sync_status='Synced'
-                        )
-                        db.session.add(record)
-                        existing_case_ids.add(candidate_case_id)
-                        added_count += 1
-
-                    db.session.commit()
-                    flash(f'Successfully imported {added_count} new records from {filename}!', 'info')
-                    page = 1
-                except Exception as e:
-                    db.session.rollback()
-                    flash(f'Error processing file: {str(e)}', 'error')
-            else:
-                flash('Choose an Excel (.xlsx) or CSV (.csv) file before uploading.', 'error')
-        elif request.form.get('manual_entry'):
+        if request.form.get('manual_entry'):
             try:
+                case_id = request.form.get('case_id', '').strip()
+                if not case_id:
+                    raise ValueError('Case ID is required.')
+
+                candidate_case_id = case_id
+                duplicate_index = 1
+                while DengueRecord.query.filter_by(case_id=candidate_case_id).first() is not None:
+                    candidate_case_id = f'{case_id}-{duplicate_index}'
+                    duplicate_index += 1
+
                 record = DengueRecord(
-                    case_id=request.form['case_id'],
-                    morbidity_month=int(request.form['morbidity_month']),
-                    morbidity_week=int(request.form['morbidity_week']) if request.form.get('morbidity_week') else None,
-                    barangay=request.form['barangay'],
-                    age=int(request.form['age']),
-                    sex=request.form['sex'],
-                    clinical_classification=request.form.get('clinical_classification'),
-                    sync_status='Synced'
+                    case_id=candidate_case_id,
+                    year=safe_int(request.form.get('year'), datetime.now().year),
+                    district=request.form.get('district', '').strip() or 'Talomo',
+                    morbidity_month=safe_int(request.form.get('morbidity_month'), 1),
+                    morbidity_week=safe_int(request.form.get('morbidity_week')),
+                    barangay=request.form.get('barangay', '').strip() or 'Unavailable',
+                    age=safe_int(request.form.get('age'), 0),
+                    sex=request.form.get('sex', '').strip() or 'Unavailable',
+                    clinical_classification=request.form.get('clinical_classification') or 'Unavailable',
+                    sync_status='Local'
                 )
                 db.session.add(record)
                 db.session.commit()
-                flash('Dengue case saved successfully.', 'info')
+                flash('Dengue case saved successfully as a new manually logged record.', 'success')
                 page = 1
             except Exception as e:
                 db.session.rollback()
                 flash(f'Could not save record: {str(e)}', 'error')
 
+        else:
+            file = request.files.get('file')
+            if file is not None:
+                filename = (file.filename or '').strip()
+                if filename.lower().endswith(('.csv', '.xlsx')):
+                    try:
+                        df = read_upload_dataframe(file, filename)
+
+                        if df.empty:
+                            raise ValueError('The uploaded file contains no data rows.')
+
+                        df = build_standardized_upload_df(df, filename=filename)
+
+                        with db.session.no_autoflush:
+                            existing_case_ids = {
+                                case_id for (case_id,) in db.session.query(DengueRecord.case_id).all()
+                            }
+
+                        # Loop through rows and insert into database
+                        added_count = 0
+                        for _, row in df.iterrows():
+                            if row.isnull().all():
+                                continue
+
+                            case_id_value = row.get('case_id')
+                            case_id_val = '' if pd.isna(case_id_value) else str(case_id_value).strip()
+                            if not case_id_val or case_id_val.upper() in {'#REF!', '#VALUE!', '#N/A', 'N/A', 'NAN', 'NULL', 'UNAVAILABLE'}:
+                                case_id_val = f"{datetime.now().year}-REC-{added_count + 1000:05d}"
+
+                            candidate_case_id = case_id_val
+                            duplicate_index = 1
+                            while candidate_case_id in existing_case_ids:
+                                candidate_case_id = f"{case_id_val}-{duplicate_index}"
+                                duplicate_index += 1
+
+                            record = DengueRecord(
+                                case_id=candidate_case_id,
+                                year=safe_int(row.get('year'), datetime.now().year),
+                                morbidity_month=safe_int(row.get('morbidity_month'), 1),
+                                morbidity_week=safe_int(row.get('morbidity_week')) if safe_int(row.get('morbidity_week')) is not None else estimate_morbidity_week(row.get('morbidity_month')),
+                                district=str(row.get('district') or 'Unavailable').strip() or 'Unavailable',
+                                barangay=str(row.get('barangay') or 'Unavailable').strip() or 'Unavailable',
+                                age=safe_int(row.get('age'), 0),
+                                sex=str(row.get('sex') or 'Unavailable').strip() or 'Unavailable',
+                                clinical_classification=str(row.get('clinical_classification') or 'Unavailable').strip() or 'Unavailable',
+                                sync_status='Synced'
+                            )
+                            db.session.add(record)
+                            existing_case_ids.add(candidate_case_id)
+                            added_count += 1
+
+                        db.session.commit()
+                        flash(f'Successfully imported {added_count} new records from {filename}!', 'info')
+                        page = 1
+                    except Exception as e:
+                        db.session.rollback()
+                        flash(f'Error processing file: {str(e)}', 'error')
+                else:
+                    flash('Choose an Excel (.xlsx) or CSV (.csv) file before uploading.', 'error')
+
     records_page = DengueRecord.query.order_by(DengueRecord.id.desc()).paginate(page=page, per_page=10, error_out=False)
     return render_template('records.html', user=current_user, records=records_page)
+
+# Screen 4: View all ingested dengue surveillance data
+@app.route('/repository')
+@login_required
+def repository():
+    year_filter = request.args.get('year', 'all', type=str)
+    search = request.args.get('search', '', type=str).strip()
+    page = request.args.get('page', 1, type=int)
+    page = max(page, 1)
+
+    available_years = [
+        int(year_row[0])
+        for year_row in db.session.query(DengueRecord.year)
+        .filter(DengueRecord.year.isnot(None))
+        .distinct()
+        .order_by(DengueRecord.year.asc())
+        .all()
+    ]
+    if not available_years:
+        available_years = [datetime.now().year]
+
+    normalized_year_filter = 'all'
+    if year_filter and str(year_filter).lower() != 'all':
+        try:
+            normalized_year_filter = str(int(year_filter))
+        except (TypeError, ValueError):
+            normalized_year_filter = 'all'
+
+    if normalized_year_filter != 'all' and int(normalized_year_filter) not in available_years:
+        available_years.append(int(normalized_year_filter))
+        available_years = sorted(set(available_years))
+
+    year_options = ['all'] + [str(year) for year in sorted(set(available_years), reverse=True)]
+
+    query = DengueRecord.query.order_by(DengueRecord.id.desc())
+
+    if normalized_year_filter and normalized_year_filter != 'all':
+        try:
+            query = query.filter(DengueRecord.year == int(normalized_year_filter))
+        except ValueError:
+            pass
+
+    if search:
+        filter_term = f'%{search}%'
+        query = query.filter(
+            or_(
+                DengueRecord.case_id.ilike(filter_term),
+                DengueRecord.barangay.ilike(filter_term),
+            )
+        )
+
+    records_page = query.paginate(page=page, per_page=50, error_out=False)
+    return render_template(
+        'data_repository.html',
+        user=current_user,
+        records=records_page,
+        year=normalized_year_filter,
+        search=search,
+        available_years=year_options,
+    )
 
 # Screen 4: Automated PDF/CSV Export Hub
 @app.route('/reports')
@@ -387,6 +675,7 @@ def download_cases_csv():
     csv_buffer = StringIO()
     pd.DataFrame([
         {
+            'year': record.year,
             'case_id': record.case_id,
             'morbidity_month': record.morbidity_month,
             'morbidity_week': record.morbidity_week,
@@ -411,6 +700,7 @@ def download_cases_excel():
     excel_buffer = BytesIO()
     pd.DataFrame([
         {
+            'year': record.year,
             'case_id': record.case_id,
             'morbidity_month': record.morbidity_month,
             'morbidity_week': record.morbidity_week,
@@ -542,16 +832,22 @@ def init_db():
     with app.app_context():
         db.create_all()
         migrate_user_table()
-        # Seed default administrative account if not exists
-        if not User.query.filter_by(username='admin').first():
-            default_admin = User(
-                username='admin',
-                role='Admin'
-            )
-            default_admin.set_password('Admin123!')
-            db.session.add(default_admin)
-            db.session.commit()
-            print("Database initialized and default Admin account created.")
+        migrate_dengue_record_table()
+        ensure_primary_admin_account()
+        print("Database initialized and default Admin account ensured.")
+
+def migrate_dengue_record_table():
+    existing_columns = {
+        column['name'] for column in db.inspect(db.engine).get_columns('dengue_record')
+    }
+
+    if 'year' not in existing_columns:
+        with db.engine.begin() as connection:
+            connection.execute(text('ALTER TABLE dengue_record ADD COLUMN year INTEGER'))
+
+    # Backfill year values from current year for legacy rows without explicit data.
+    with db.engine.begin() as connection:
+        connection.execute(text('UPDATE dengue_record SET year = :year WHERE year IS NULL'), {'year': datetime.now().year})
 
 def migrate_user_table():
     existing_columns = {

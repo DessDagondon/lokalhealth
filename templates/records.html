@@ -15,9 +15,20 @@
             <div class="card border-0 shadow-sm p-4">
                 <h5 class="fw-bold mb-3">Log New Dengue Case</h5>
                 <form method="POST" action="{{ url_for('records') }}">
+                    <input type="hidden" name="manual_entry" value="1">
                     <div class="mb-3">
                         <label for="case_id" class="form-label small fw-bold">Case ID (Anonymized)</label>
                         <input type="text" class="form-control" id="case_id" name="case_id" placeholder="e.g. TAL-2026-001" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="year" class="form-label small fw-bold">Year</label>
+                        <input type="number" class="form-control" id="year" name="year" min="1900" max="2100" value="{{ current_year | default(2026) }}" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="district" class="form-label small fw-bold">District</label>
+                        <input type="text" class="form-control" id="district" name="district" placeholder="e.g. Talomo" value="Talomo" required>
                     </div>
                     
                     <div class="row g-2 mb-3">
@@ -41,13 +52,14 @@
                             <select class="form-select" id="sex" name="sex" required>
                                 <option value="M">Male</option>
                                 <option value="F">Female</option>
+                                <option value="Other / Not Specified">Other / Not Specified</option>
                             </select>
                         </div>
                     </div>
 
                     <div class="mb-3">
                         <label for="barangay" class="form-label small fw-bold">Barangay</label>
-                        <input type="text" class="form-control" id="barangay" name="barangay" placeholder="e.g. Talomo Proper" required>
+                        <input type="text" class="form-control" id="barangay" name="barangay" placeholder="e.g. Barangay-A" required>
                     </div>
 
                     <div class="mb-4">
@@ -59,7 +71,7 @@
                         </select>
                     </div>
 
-                    <button type="submit" name="manual_entry" class="btn btn-primary w-100 fw-semibold">Save Record</button>
+                    <button type="submit" class="btn btn-primary w-100 fw-semibold">Save Record</button>
                 </form>
             </div>
         </div>
@@ -104,9 +116,9 @@
                             <tr>
                                 <td class="fw-bold">{{ record.case_id }}</td>
                                 <td>{{ record.barangay }}</td>
-                                <td>{{ record.age }} / {{ record.sex }}</td>
+                                <td>{{ record.age if record.age is not none and record.age != 0 else 'Unavailable' }} / {{ record.sex }}</td>
                                 <td>{{ record.clinical_classification }}</td>
-                                <td><span class="badge bg-success">{{ record.sync_status }}</span></td>
+                                <td><span class="badge bg-success">{{ 'Manual' if record.sync_status == 'Local' else record.sync_status }}</span></td>
                             </tr>
                             {% else %}
                             <tr>
@@ -177,9 +189,9 @@
                             <tr>
                                 <td class="fw-bold">{{ record.case_id }}</td>
                                 <td>{{ record.barangay }}</td>
-                                <td>{{ record.age }} / {{ record.sex }}</td>
+                                <td>{{ record.age if record.age is not none and record.age != 0 else 'Unavailable' }} / {{ record.sex }}</td>
                                 <td>{{ record.clinical_classification }}</td>
-                                <td><span class="badge bg-success">{{ record.sync_status }}</span></td>
+                                <td><span class="badge bg-success">{{ 'Manual' if record.sync_status == 'Local' else record.sync_status }}</span></td>
                             </tr>
                             {% else %}
                             <tr>

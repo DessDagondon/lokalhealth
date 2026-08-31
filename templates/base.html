@@ -18,6 +18,7 @@
             <div class="navbar-nav">
                 <a class="nav-link" href="{{ url_for('dashboard') }}">Dashboard</a>
                 <a class="nav-link" href="{{ url_for('records') }}">Records</a>
+                <a class="nav-link" href="{{ url_for('repository') }}">Repository</a>
                 <a class="nav-link" href="{{ url_for('reports') }}">Reports</a>
                 {% if current_user.role == 'Admin' %}
                 <a class="nav-link" href="{{ url_for('admin') }}">Admin</a>
@@ -32,7 +33,7 @@
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
                 {% for category, message in messages %}
-                    <div class="alert alert-{{ 'danger' if category == 'error' else 'info' }} alert-dismissible fade show" role="alert">
+                    <div class="alert alert-{{ 'danger' if category == 'error' else ('success' if category == 'success' else 'info') }} alert-dismissible fade show" role="alert">
                         {{ message }}
                         <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                     </div>

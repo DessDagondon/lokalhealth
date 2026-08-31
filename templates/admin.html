@@ -38,7 +38,7 @@
                     </div>
                     <div class="form-check">
                         <input class="form-check-input" type="checkbox" id="new-can-delete" name="can_delete">
-                        <label class="form-check-label" for="new-can-delete">Delete</label>
+                        <label class="form-check-label" for="new-can-delete">Archive</label>
                     </div>
                 </div>
                 <button type="submit" class="btn btn-primary">Create Account</button>
@@ -89,7 +89,7 @@
                                 <span class="badge bg-warning-subtle text-warning border border-warning">Edit</span>
                             {% endif %}
                             {% if user_item.can_delete %}
-                                <span class="badge bg-danger-subtle text-danger border border-danger">Delete</span>
+                                <span class="badge bg-danger-subtle text-danger border border-danger">Archive</span>
                             {% endif %}
                         </div>
                     </td>
@@ -144,7 +144,7 @@
 
                                                 <div class="form-check form-switch mb-2">
                                                     <input class="form-check-input" type="checkbox" id="can_delete{{ user_item.id }}" name="can_delete" {% if user_item.can_delete %}checked{% endif %}>
-                                                    <label class="form-check-label fw-semibold" for="can_delete{{ user_item.id }}">Can Delete Case Records</label>
+                                                    <label class="form-check-label fw-semibold" for="can_delete{{ user_item.id }}">Can Archive Case Records</label>
                                                 </div>
                                             </div>
                                             <div class="modal-footer">
