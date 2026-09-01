@@ -57,7 +57,7 @@ class DengueRecord(db.Model):
     sex = db.Column(db.String(10), nullable=False)
     clinical_classification = db.Column(db.String(100), nullable=True)
     case_classification = db.Column(db.String(100), nullable=True)
-    sync_status = db.Column(db.String(20), default='Synced')  # 'Local' or 'Synced'
+    sync_status = db.Column(db.String(20), default='Synced')  # 'Manual/Local' or 'Synced'
 
 
 def ensure_primary_admin_account():
@@ -216,6 +216,139 @@ def coalesce_text(value, fallback='Unavailable'):
     if normalized in {'', 'nan', 'n/a', 'na', '#ref!', '#value!', 'null', 'none'}:
         return fallback
     return text or fallback
+
+
+def get_yearly_data_availability(records=None):
+    if records is None:
+        records = DengueRecord.query.all()
+
+    def normalize_value(value):
+        if value is None:
+            return None
+        if isinstance(value, float) and pd.isna(value):
+            return None
+        if isinstance(value, str):
+            text = value.strip()
+            if text == '':
+                return None
+            normalized = text.lower()
+            if normalized in {'nan', 'n/a', 'na', 'null', 'none', 'unavailable', '#ref!', '#value!'}:
+                return None
+            return text
+        if isinstance(value, (int, float)):
+            if value == 0:
+                return None
+            return value
+        return value
+
+    variable_names = {
+        'case_id': 'Case ID',
+        'year': 'Year',
+        'morbidity_month': 'Morbidity Month',
+        'morbidity_week': 'Morbidity Week',
+        'district': 'District',
+        'barangay': 'Barangay',
+        'age': 'Age',
+        'sex': 'Sex',
+        'clinical_classification': 'Clinical Classification',
+        'case_classification': 'Case Classification',
+    }
+
+    records_by_year = {}
+    for record in records:
+        year = record.year
+        if year is None:
+            continue
+        records_by_year.setdefault(int(year), []).append(record)
+
+    summary = []
+    for year in sorted(records_by_year):
+        year_records = records_by_year[year]
+        total_records = len(year_records)
+        variable_breakdown = {}
+
+        for attribute, label in variable_names.items():
+            available = 0
+            unavailable = 0
+            for record in year_records:
+                value = getattr(record, attribute, None)
+                normalized = normalize_value(value)
+                if normalized is None:
+                    unavailable += 1
+                else:
+                    available += 1
+            variable_breakdown[label] = {
+                'available': available,
+                'unavailable': unavailable,
+            }
+
+        summary.append({
+            'year': year,
+            'total_records': total_records,
+            'variables': variable_breakdown,
+        })
+    return summary
+
+
+def get_available_report_years():
+    return [
+        int(year_row[0])
+        for year_row in db.session.query(DengueRecord.year)
+        .filter(DengueRecord.year.isnot(None))
+        .distinct()
+        .order_by(DengueRecord.year.asc())
+        .all()
+    ]
+
+
+def get_report_summary_for_year(year_value):
+    year = int(year_value) if year_value is not None else None
+    records_list = DengueRecord.query.filter(DengueRecord.year == year).all() if year is not None else DengueRecord.query.all()
+    total_records = len(records_list)
+    month_counts = {}
+    for record in records_list:
+        month_value = record.morbidity_month
+        if month_value not in (None, '', 'nan', 'n/a', 'na', 'null', 'none', 'unavailable'):
+            month_counts[month_value] = month_counts.get(month_value, 0) + 1
+
+    summary = {
+        'year': year,
+        'total_records': total_records,
+        'month_counts': month_counts,
+        'availability': {
+            'Month': {
+                'total': total_records,
+                'available': sum(1 for record in records_list if record.morbidity_month is not None and str(record.morbidity_month).strip().lower() not in {'', '0', 'nan', 'n/a', 'na', 'null', 'none', 'unavailable'}),
+                'unavailable': sum(1 for record in records_list if record.morbidity_month is None or str(record.morbidity_month).strip().lower() in {'', '0', 'nan', 'n/a', 'na', 'null', 'none', 'unavailable'}),
+            },
+            'Week': {
+                'total': total_records,
+                'available': sum(1 for record in records_list if record.morbidity_week is not None and str(record.morbidity_week).strip().lower() not in {'', '0', 'nan', 'n/a', 'na', 'null', 'none', 'unavailable'}),
+                'unavailable': sum(1 for record in records_list if record.morbidity_week is None or str(record.morbidity_week).strip().lower() in {'', '0', 'nan', 'n/a', 'na', 'null', 'none', 'unavailable'}),
+            },
+            'Classification': {
+                'total': total_records,
+                'available': sum(1 for record in records_list if record.clinical_classification and str(record.clinical_classification).strip().lower() not in {'', 'nan', 'n/a', 'na', 'null', 'none', 'unavailable'}),
+                'unavailable': sum(1 for record in records_list if not record.clinical_classification or str(record.clinical_classification).strip().lower() in {'', 'nan', 'n/a', 'na', 'null', 'none', 'unavailable'}),
+            },
+            'District': {
+                'total': total_records,
+                'available': sum(1 for record in records_list if record.district and str(record.district).strip().lower() not in {'', 'nan', 'n/a', 'na', 'null', 'none', 'unavailable'}),
+                'unavailable': sum(1 for record in records_list if not record.district or str(record.district).strip().lower() in {'', 'nan', 'n/a', 'na', 'null', 'none', 'unavailable'}),
+            },
+            'Barangay': {
+                'total': total_records,
+                'available': sum(1 for record in records_list if record.barangay and str(record.barangay).strip().lower() not in {'', 'nan', 'n/a', 'na', 'null', 'none', 'unavailable'}),
+                'unavailable': sum(1 for record in records_list if not record.barangay or str(record.barangay).strip().lower() in {'', 'nan', 'n/a', 'na', 'null', 'none', 'unavailable'}),
+            },
+            'Age': {
+                'total': total_records,
+                'available': sum(1 for record in records_list if record.age is not None and str(record.age).strip().lower() not in {'', '0', '0.0', 'nan', 'n/a', 'na', 'null', 'none', 'unavailable'}),
+                'unavailable': sum(1 for record in records_list if record.age is None or str(record.age).strip().lower() in {'', '0', '0.0', 'nan', 'n/a', 'na', 'null', 'none', 'unavailable'}),
+            },
+        },
+    }
+    return summary
 
 
 def estimate_morbidity_week(month_value):
@@ -619,6 +752,7 @@ def repository():
         )
 
     records_page = query.paginate(page=page, per_page=50, error_out=False)
+    yearly_availability_summary = get_yearly_data_availability(DengueRecord.query.all())
     return render_template(
         'data_repository.html',
         user=current_user,
@@ -626,13 +760,34 @@ def repository():
         year=normalized_year_filter,
         search=search,
         available_years=year_options,
+        yearly_availability_summary=yearly_availability_summary,
     )
 
 # Screen 4: Automated PDF/CSV Export Hub
 @app.route('/reports')
 @login_required
 def reports():
-    return render_template('reports.html', user=current_user)
+    available_years = get_available_report_years()
+    selected_year = request.args.get('year', type=int)
+    if selected_year is None and available_years:
+        selected_year = max(available_years)
+
+    if selected_year is not None and selected_year not in available_years:
+        selected_year = None
+
+    yearly_availability_summary = get_yearly_data_availability(DengueRecord.query.all())
+    summary_for_year = get_report_summary_for_year(selected_year) if selected_year is not None else None
+    has_data = bool(summary_for_year and summary_for_year['total_records'] > 0)
+
+    return render_template(
+        'reports.html',
+        user=current_user,
+        available_years=available_years,
+        selected_year=selected_year,
+        yearly_availability_summary=yearly_availability_summary,
+        summary_for_year=summary_for_year,
+        has_data=has_data,
+    )
 
 @app.route('/reports/summary.pdf')
 @login_required
@@ -640,7 +795,25 @@ def download_summary_pdf():
     from reportlab.lib.pagesizes import letter
     from reportlab.pdfgen import canvas
 
-    records_list = DengueRecord.query.order_by(DengueRecord.morbidity_month).all()
+    selected_year = request.args.get('year', type=int)
+    available_years = get_available_report_years()
+    if selected_year is None:
+        selected_year = max(available_years) if available_years else None
+    if selected_year not in available_years:
+        selected_year = None
+
+    records_list = DengueRecord.query.filter(DengueRecord.year == selected_year).order_by(DengueRecord.morbidity_month).all() if selected_year is not None else DengueRecord.query.order_by(DengueRecord.morbidity_month).all()
+    if not records_list:
+        pdf_buffer = BytesIO()
+        document = canvas.Canvas(pdf_buffer, pagesize=letter)
+        document.setTitle('LokalHealth Monthly Epidemiological Summary')
+        document.setFont('Helvetica-Bold', 12)
+        document.drawString(72, 740, 'No data available for the selected year')
+        document.save()
+        pdf_buffer.seek(0)
+        return send_file(pdf_buffer, mimetype='application/pdf', as_attachment=True, download_name='lokalhealth-monthly-summary.pdf')
+
+    summary = get_report_summary_for_year(selected_year)
     month_counts = {}
     for record in records_list:
         month_counts[record.morbidity_month] = month_counts.get(record.morbidity_month, 0) + 1
@@ -652,8 +825,9 @@ def download_summary_pdf():
     document.drawString(72, 740, 'LokalHealth Monthly Epidemiological Summary')
     document.setFont('Helvetica', 10)
     document.drawString(72, 720, f'Generated: {datetime.now().strftime("%Y-%m-%d %H:%M")}')
-    document.drawString(72, 700, f'Total anonymized cases: {len(records_list)}')
-    document.drawString(72, 680, 'Cases by morbidity month:')
+    document.drawString(72, 700, f'Year: {selected_year}')
+    document.drawString(72, 688, f'Total anonymized cases: {len(records_list)}')
+    document.drawString(72, 676, 'Seasonal breakdown (Morbidity Month):')
 
     y_position = 660
     for month, count in sorted(month_counts.items()):
@@ -663,15 +837,64 @@ def download_summary_pdf():
             document.showPage()
             y_position = 740
 
+    document.drawString(72, max(y_position - 24, 110), 'Data availability and completeness summary:')
+    y_position = max(y_position - 40, 92)
+    document.drawString(90, y_position, 'Variable')
+    document.drawString(250, y_position, 'Total')
+    document.drawString(315, y_position, 'Available')
+    document.drawString(390, y_position, 'Unavailable')
+    y_position -= 16
+    for label, values in summary['availability'].items():
+        document.drawString(90, y_position, label)
+        document.drawString(250, y_position, str(values['total']))
+        document.drawString(315, y_position, str(values['available']))
+        document.drawString(390, y_position, str(values['unavailable']))
+        y_position -= 16
+        if y_position < 72:
+            document.showPage()
+            y_position = 740
+
     document.save()
     pdf_buffer.seek(0)
     return send_file(pdf_buffer, mimetype='application/pdf', as_attachment=True,
-                     download_name='lokalhealth-monthly-summary.pdf')
+                     download_name=f'localkhealth-summary-{selected_year}.pdf' if selected_year is not None else 'lokalhealth-monthly-summary.pdf')
+
+@app.route('/reports/summary.csv')
+@login_required
+def download_summary_csv():
+    selected_year = request.args.get('year', type=int)
+    available_years = get_available_report_years()
+    if selected_year is None:
+        selected_year = max(available_years) if available_years else None
+    if selected_year not in available_years:
+        selected_year = None
+
+    summary = get_report_summary_for_year(selected_year) if selected_year is not None else {'year': None, 'total_records': 0, 'availability': {}}
+    rows = []
+    for label, values in summary['availability'].items():
+        rows.append({
+            'year': summary['year'],
+            'variable': label,
+            'total': values['total'],
+            'available': values['available'],
+            'unavailable': values['unavailable'],
+        })
+
+    csv_buffer = StringIO()
+    pd.DataFrame(rows).to_csv(csv_buffer, index=False)
+    csv_file = BytesIO(csv_buffer.getvalue().encode('utf-8'))
+    csv_file.seek(0)
+    return send_file(csv_file, mimetype='text/csv', as_attachment=True,
+                     download_name=f'lokalhealth-summary-{selected_year}.csv' if selected_year is not None else 'lokalhealth-summary.csv')
 
 @app.route('/reports/cases.csv')
 @login_required
 def download_cases_csv():
-    records_list = DengueRecord.query.order_by(DengueRecord.id).all()
+    selected_year = request.args.get('year', type=int)
+    query = DengueRecord.query.order_by(DengueRecord.id)
+    if selected_year is not None:
+        query = query.filter(DengueRecord.year == selected_year)
+    records_list = query.all()
     csv_buffer = StringIO()
     pd.DataFrame([
         {
@@ -691,12 +914,16 @@ def download_cases_csv():
     csv_file = BytesIO(csv_buffer.getvalue().encode('utf-8'))
     csv_file.seek(0)
     return send_file(csv_file, mimetype='text/csv', as_attachment=True,
-                     download_name='lokalhealth-anonymized-case-data.csv')
+                     download_name=f'lokalhealth-anonymized-case-data-{selected_year}.csv' if selected_year is not None else 'lokalhealth-anonymized-case-data.csv')
 
 @app.route('/reports/cases.xlsx')
 @login_required
 def download_cases_excel():
-    records_list = DengueRecord.query.order_by(DengueRecord.id).all()
+    selected_year = request.args.get('year', type=int)
+    query = DengueRecord.query.order_by(DengueRecord.id)
+    if selected_year is not None:
+        query = query.filter(DengueRecord.year == selected_year)
+    records_list = query.all()
     excel_buffer = BytesIO()
     pd.DataFrame([
         {
@@ -716,7 +943,7 @@ def download_cases_excel():
     excel_buffer.seek(0)
     return send_file(excel_buffer,
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                     as_attachment=True, download_name='lokalhealth-anonymized-case-data.xlsx')
+                     as_attachment=True, download_name=f'lokalhealth-anonymized-case-data-{selected_year}.xlsx' if selected_year is not None else 'lokalhealth-anonymized-case-data.xlsx')
 
 # Screen 5: Admin Settings & Role Assignment (Restricted to Admin Role)
 @app.route('/admin/users/create', methods=['POST'])

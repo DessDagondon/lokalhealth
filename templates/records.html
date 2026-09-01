@@ -82,12 +82,15 @@
                 <h5 class="fw-bold mb-2">Batch Dataset Upload (.xlsx / .csv)</h5>
                 <p class="text-muted small mb-3">Import surveillance datasets directly into SQLite without manual file conversion.</p>
                 
-                <form method="POST" action="{{ url_for('records') }}" enctype="multipart/form-data">
+                <form method="POST" action="{{ url_for('records') }}" enctype="multipart/form-data" id="upload-form">
                     <div class="mb-3">
                         <label for="dataset-file" class="form-label small fw-bold">Choose dataset file</label>
                         <input type="file" class="form-control" id="dataset-file" name="file" accept=".xlsx,.csv" required>
                     </div>
-                    <button class="btn btn-primary fw-semibold" type="submit">Upload File</button>
+                    <button class="btn btn-primary fw-semibold" type="submit" id="upload-button">Upload File</button>
+                    <div id="upload-status" class="mt-2 small text-muted" aria-live="polite" style="display:none;">
+                        Uploading dataset...
+                    </div>
                     <div class="d-flex justify-content-between align-items-center mt-2">
                         <small class="text-muted">Formats: <strong>Microsoft Excel (.xlsx)</strong> or <strong>CSV (.csv)</strong></small>
                     </div>

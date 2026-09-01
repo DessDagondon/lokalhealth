@@ -36,6 +36,47 @@
     </div>
 </div>
 
+{% if yearly_availability_summary %}
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+        <h5 class="fw-bold mb-3">Data availability summary</h5>
+        <div class="d-flex flex-wrap gap-2">
+            {% for entry in yearly_availability_summary %}
+            <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#yearly-summary-{{ entry.year }}">
+                {{ entry.year }}
+            </button>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+{% for entry in yearly_availability_summary %}
+<div class="modal fade" id="yearly-summary-{{ entry.year }}" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">{{ entry.year }} availability summary</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="fw-bold mb-3">{{ entry.total_records }} total records</p>
+                <div class="list-group list-group-flush">
+                    {% for label, counts in entry.variables.items() %}
+                    <div class="list-group-item px-0">
+                        <div class="d-flex justify-content-between gap-3">
+                            <span>{{ label }}</span>
+                            <span class="text-muted">Available: {{ counts.available }} / Unavailable: {{ counts.unavailable }}</span>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endfor %}
+{% endif %}
+
 <div class="card border-0 shadow-sm">
     <div class="table-responsive">
         <table class="table table-striped table-hover align-middle mb-0">

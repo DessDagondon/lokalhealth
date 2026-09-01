@@ -6,23 +6,127 @@
     <p class="text-muted small">Generate Epidemiological Reports for Health Authorities</p>
 </div>
 
-<div class="row g-4">
-    <div class="col-md-6">
-        <div class="card border-0 shadow-sm p-4">
-            <h5 class="fw-bold mb-2">Monthly Epidemiological Summary (PDF)</h5>
-            <p class="text-muted small mb-4">Consolidated report on case trends, morbidity week distributions, and active alert tiers.</p>
-            <a class="btn btn-outline-primary fw-semibold" href="{{ url_for('download_summary_pdf') }}">Download PDF Summary</a>
+{% if yearly_availability_summary %}
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+        <h5 class="fw-bold mb-3">Yearly data availability</h5>
+        <div class="d-flex flex-wrap gap-2">
+            {% for entry in yearly_availability_summary %}
+            <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#yearly-summary-{{ entry.year }}">
+                {{ entry.year }}
+            </button>
+            {% endfor %}
         </div>
     </div>
-    <div class="col-md-6">
-        <div class="card border-0 shadow-sm p-4">
-            <h5 class="fw-bold mb-2">Raw Anonymized Case Data (CSV)</h5>
-            <p class="text-muted small mb-4">Export full anonymized dataset strictly compliant with RA 10173 Data Privacy guidelines.</p>
-            <div class="d-flex gap-2 flex-wrap">
-                <a class="btn btn-outline-success fw-semibold" href="{{ url_for('download_cases_csv') }}">Export CSV Dataset</a>
-                <a class="btn btn-outline-success fw-semibold" href="{{ url_for('download_cases_excel') }}">Export Excel (.xlsx)</a>
+</div>
+
+{% for entry in yearly_availability_summary %}
+<div class="modal fade" id="yearly-summary-{{ entry.year }}" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">{{ entry.year }} availability summary</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="fw-bold mb-3">{{ entry.total_records }} total records</p>
+                <div class="list-group list-group-flush">
+                    {% for label, counts in entry.variables.items() %}
+                    <div class="list-group-item px-0">
+                        <div class="d-flex justify-content-between gap-3">
+                            <span>{{ label }}</span>
+                            <span class="text-muted">Available: {{ counts.available }} / Unavailable: {{ counts.unavailable }}</span>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
             </div>
         </div>
     </div>
 </div>
+{% endfor %}
+{% endif %}
+
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+        <div class="row g-3 align-items-center">
+            <div class="col-md-4">
+                <label for="year-select" class="form-label small fw-bold mb-1">Year</label>
+                <form method="get" action="{{ url_for('reports') }}">
+                    <select id="year-select" name="year" class="form-select form-select-sm" onchange="this.form.submit()">
+                        {% if not available_years %}
+                        <option value="">No available years</option>
+                        {% else %}
+                            {% for year in available_years %}
+                            <option value="{{ year }}" {% if selected_year == year %}selected{% endif %}>{{ year }}</option>
+                            {% endfor %}
+                        {% endif %}
+                    </select>
+                </form>
+            </div>
+            <div class="col-md-8 d-flex align-items-end justify-content-md-end">
+                {% if selected_year is not none and not has_data %}
+                <span class="text-warning fw-semibold">No data available for the selected year</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm p-4 h-100">
+            <h5 class="fw-bold mb-2">PDF Report</h5>
+            <p class="text-muted small mb-4">Case totals, seasonality, and completeness summary for the selected year.</p>
+            <a class="btn btn-outline-primary fw-semibold {% if not has_data %}disabled{% endif %}" href="{{ url_for('download_summary_pdf', year=selected_year) if selected_year is not none else '#' }}">Download PDF Summary</a>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm p-4 h-100">
+            <h5 class="fw-bold mb-2">CSV Summary</h5>
+            <p class="text-muted small mb-4">Overview metrics exported as a year-specific summary table.</p>
+            <a class="btn btn-outline-success fw-semibold {% if not has_data %}disabled{% endif %}" href="{{ url_for('download_summary_csv', year=selected_year) if selected_year is not none else '#' }}">Export CSV Summary</a>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm p-4 h-100">
+            <h5 class="fw-bold mb-2">Raw Dataset</h5>
+            <p class="text-muted small mb-4">Export filtered anonymized case records for the selected year.</p>
+            <div class="d-flex gap-2 flex-wrap">
+                <a class="btn btn-outline-dark fw-semibold {% if not has_data %}disabled{% endif %}" href="{{ url_for('download_cases_csv', year=selected_year) if selected_year is not none else '#' }}">CSV</a>
+                <a class="btn btn-outline-dark fw-semibold {% if not has_data %}disabled{% endif %}" href="{{ url_for('download_cases_excel', year=selected_year) if selected_year is not none else '#' }}">Excel (.xlsx)</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if summary_for_year %}
+<div class="card border-0 shadow-sm mt-4">
+    <div class="card-body">
+        <h5 class="fw-bold mb-3">{{ selected_year }} summary</h5>
+        <div class="table-responsive">
+            <table class="table table-sm table-striped mb-0">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Variable</th>
+                        <th>Total</th>
+                        <th>Available</th>
+                        <th>Unavailable</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for label, values in summary_for_year['availability'].items() %}
+                    <tr>
+                        <td>{{ label }}</td>
+                        <td>{{ values['total'] }}</td>
+                        <td>{{ values['available'] }}</td>
+                        <td>{{ values['unavailable'] }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
 {% endblock %}
