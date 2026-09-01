@@ -90,7 +90,8 @@
                     <th>Barangay</th>
                     <th>Age</th>
                     <th>Sex</th>
-                    <th>Classification</th>
+                    <th>Clinical Classification</th>
+                    <th>Case Classification</th>
                 </tr>
             </thead>
             <tbody>
@@ -106,11 +107,12 @@
                         <td>{{ record.age if record.age is not none and record.age != 0 else 'Unavailable' }}</td>
                         <td>{{ record.sex }}</td>
                         <td>{{ record.clinical_classification or 'N/A' }}</td>
+                        <td>{{ record.case_classification or 'N/A' }}</td>
                     </tr>
                     {% endfor %}
                 {% else %}
                     <tr>
-                        <td colspan="9" class="text-center text-muted py-4">No records match the selected filters.</td>
+                        <td colspan="10" class="text-center text-muted py-4">No records match the selected filters.</td>
                     </tr>
                 {% endif %}
             </tbody>

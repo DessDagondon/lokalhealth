@@ -65,6 +65,41 @@ class UploadHeaderCompatibilityTest(unittest.TestCase):
             with app.app_context():
                 self.assertEqual(DengueRecord.query.count(), 1)
 
+    def test_upload_preserves_case_classification_for_export(self):
+        from app import DengueRecord
+        import io
+
+        with app.app_context():
+            db.drop_all()
+            db.create_all()
+            from app import User
+            user = User(username='caseclassuser', role='Admin', can_create=True, can_edit=True, can_delete=True)
+            user.set_password('pass')
+            db.session.add(user)
+            db.session.commit()
+
+        with app.test_client() as client:
+            client.post('/login', data={'username': 'caseclassuser', 'password': 'pass'}, follow_redirects=False)
+            csv_data = (
+                'Case ID,Morbidity Month,Morbidity Week,District,Barangay,Age,Sex,Clinical Classification,Case Classification\n'
+                'C-2023-001,1,1,Talomo,Talomo Proper,25,M,Dengue without Warning Signs,Confirmed\n'
+            )
+            response = client.post(
+                '/records',
+                data={'file': (io.BytesIO(csv_data.encode('utf-8')), 'sample-2023.csv')},
+                content_type='multipart/form-data',
+                follow_redirects=False,
+            )
+            self.assertIn('Successfully imported', response.get_data(as_text=True))
+            with app.app_context():
+                record = DengueRecord.query.filter_by(case_id='C-2023-001').first()
+                self.assertIsNotNone(record)
+                self.assertEqual(record.case_classification, 'Confirmed')
+
+            export_response = client.get('/reports/cases.csv?year=2023')
+            self.assertEqual(export_response.status_code, 200)
+            self.assertIn('Confirmed', export_response.get_data(as_text=True))
+
     def test_upload_keeps_new_rows_when_case_id_repeats(self):
         from app import DengueRecord
         import io

@@ -33,11 +33,11 @@
                     
                     <div class="row g-2 mb-3">
                         <div class="col-6">
-                            <label for="morbidity_month" class="form-label small fw-bold">Month (1-12)</label>
+                            <label for="morbidity_month" class="form-label small fw-bold">Morbidity Month (1-12)</label>
                             <input type="number" class="form-control" id="morbidity_month" name="morbidity_month" min="1" max="12" placeholder="e.g. 5" required>
                         </div>
                         <div class="col-6">
-                            <label for="morbidity_week" class="form-label small fw-bold">Week (1-52)</label>
+                            <label for="morbidity_week" class="form-label small fw-bold">Morbidity Week (1-52)</label>
                             <input type="number" class="form-control" id="morbidity_week" name="morbidity_week" min="1" max="52" placeholder="e.g. 18">
                         </div>
                     </div>
@@ -62,12 +62,22 @@
                         <input type="text" class="form-control" id="barangay" name="barangay" placeholder="e.g. Barangay-A" required>
                     </div>
 
-                    <div class="mb-4">
+                    <div class="mb-3">
                         <label for="clinical_classification" class="form-label small fw-bold">Clinical Classification</label>
                         <select class="form-select" id="clinical_classification" name="clinical_classification">
                             <option value="Dengue without Warning Signs">Dengue without Warning Signs</option>
                             <option value="Dengue with Warning Signs">Dengue with Warning Signs</option>
                             <option value="Severe Dengue">Severe Dengue</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-4">
+                        <label for="case_classification" class="form-label small fw-bold">Case Classification</label>
+                        <select class="form-select" id="case_classification" name="case_classification">
+                            <option value="Suspected">Suspected</option>
+                            <option value="Probable">Probable</option>
+                            <option value="Confirmed" selected>Confirmed</option>
+                            <option value="Discarded">Discarded</option>
                         </select>
                     </div>
 
@@ -110,7 +120,8 @@
                                 <th>Case ID</th>
                                 <th>Barangay</th>
                                 <th>Age/Sex</th>
-                                <th>Classification</th>
+                                <th>Clinical Classification</th>
+                                <th>Case Classification</th>
                                 <th>Sync</th>
                             </tr>
                         </thead>
@@ -121,11 +132,12 @@
                                 <td>{{ record.barangay }}</td>
                                 <td>{{ record.age if record.age is not none and record.age != 0 else 'Unavailable' }} / {{ record.sex }}</td>
                                 <td>{{ record.clinical_classification }}</td>
+                                <td>{{ record.case_classification or 'N/A' }}</td>
                                 <td><span class="badge bg-success">{{ 'Manual' if record.sync_status == 'Local' else record.sync_status }}</span></td>
                             </tr>
                             {% else %}
                             <tr>
-                                <td colspan="5" class="text-center text-muted py-4">No records logged yet. Upload an Excel/CSV file or add a case manually.</td>
+                                <td colspan="6" class="text-center text-muted py-4">No records logged yet. Upload an Excel/CSV file or add a case manually.</td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -183,7 +195,8 @@
                                 <th>Case ID</th>
                                 <th>Barangay</th>
                                 <th>Age/Sex</th>
-                                <th>Classification</th>
+                                <th>Clinical Classification</th>
+                                <th>Case Classification</th>
                                 <th>Sync</th>
                             </tr>
                         </thead>
@@ -194,11 +207,12 @@
                                 <td>{{ record.barangay }}</td>
                                 <td>{{ record.age if record.age is not none and record.age != 0 else 'Unavailable' }} / {{ record.sex }}</td>
                                 <td>{{ record.clinical_classification }}</td>
+                                <td>{{ record.case_classification or 'N/A' }}</td>
                                 <td><span class="badge bg-success">{{ 'Manual' if record.sync_status == 'Local' else record.sync_status }}</span></td>
                             </tr>
                             {% else %}
                             <tr>
-                                <td colspan="5" class="text-center text-muted py-4">No records currently available in the database.</td>
+                                <td colspan="6" class="text-center text-muted py-4">No records currently available in the database.</td>
                             </tr>
                             {% endfor %}
                         </tbody>

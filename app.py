@@ -326,10 +326,15 @@ def get_report_summary_for_year(year_value):
                 'available': sum(1 for record in records_list if record.morbidity_week is not None and str(record.morbidity_week).strip().lower() not in {'', '0', 'nan', 'n/a', 'na', 'null', 'none', 'unavailable'}),
                 'unavailable': sum(1 for record in records_list if record.morbidity_week is None or str(record.morbidity_week).strip().lower() in {'', '0', 'nan', 'n/a', 'na', 'null', 'none', 'unavailable'}),
             },
-            'Classification': {
+            'Clinical Classification': {
                 'total': total_records,
                 'available': sum(1 for record in records_list if record.clinical_classification and str(record.clinical_classification).strip().lower() not in {'', 'nan', 'n/a', 'na', 'null', 'none', 'unavailable'}),
                 'unavailable': sum(1 for record in records_list if not record.clinical_classification or str(record.clinical_classification).strip().lower() in {'', 'nan', 'n/a', 'na', 'null', 'none', 'unavailable'}),
+            },
+            'Case Classification': {
+                'total': total_records,
+                'available': sum(1 for record in records_list if record.case_classification and str(record.case_classification).strip().lower() not in {'', 'nan', 'n/a', 'na', 'null', 'none', 'unavailable'}),
+                'unavailable': sum(1 for record in records_list if not record.case_classification or str(record.case_classification).strip().lower() in {'', 'nan', 'n/a', 'na', 'null', 'none', 'unavailable'}),
             },
             'District': {
                 'total': total_records,
@@ -390,7 +395,7 @@ def build_standardized_upload_df(df, filename=''):
     if df is None or df.empty:
         return pd.DataFrame(columns=[
             'year', 'case_id', 'morbidity_month', 'morbidity_week', 'district', 'barangay',
-            'age', 'sex', 'clinical_classification'
+            'age', 'sex', 'clinical_classification', 'case_classification'
         ])
 
     df = df.copy()
@@ -398,7 +403,7 @@ def build_standardized_upload_df(df, filename=''):
     if df.empty:
         return pd.DataFrame(columns=[
             'year', 'case_id', 'morbidity_month', 'morbidity_week', 'district', 'barangay',
-            'age', 'sex', 'clinical_classification'
+            'age', 'sex', 'clinical_classification', 'case_classification'
         ])
 
     upload_year = detect_upload_year(df, filename)
@@ -441,6 +446,7 @@ def build_standardized_upload_df(df, filename=''):
     ])
     sex_source = find_first_matching_column(df.columns, ['sex'])
     clinical_source = find_first_matching_column(df.columns, ['clinical_classification', 'clinclass'])
+    case_classification_source = find_first_matching_column(df.columns, ['case_classification', 'caseclass'])
 
     def resolve_text_source(source_name, fallback='Unavailable'):
         if source_name is None or source_name not in df.columns:
@@ -494,10 +500,11 @@ def build_standardized_upload_df(df, filename=''):
     df['barangay'] = resolve_text_source(barangay_source, fallback='Unavailable')
     df['sex'] = resolve_text_source(sex_source, fallback='Unavailable')
     df['clinical_classification'] = resolve_text_source(clinical_source, fallback='Unavailable')
+    df['case_classification'] = resolve_text_source(case_classification_source, fallback='Unavailable')
 
     final_columns = [
         'year', 'case_id', 'morbidity_month', 'morbidity_week', 'district', 'barangay',
-        'age', 'sex', 'clinical_classification'
+        'age', 'sex', 'clinical_classification', 'case_classification'
     ]
     df = df[final_columns].copy()
 
@@ -628,6 +635,7 @@ def records():
                     age=safe_int(request.form.get('age'), 0),
                     sex=request.form.get('sex', '').strip() or 'Unavailable',
                     clinical_classification=request.form.get('clinical_classification') or 'Unavailable',
+                    case_classification=request.form.get('case_classification') or 'Unavailable',
                     sync_status='Local'
                 )
                 db.session.add(record)
@@ -683,6 +691,7 @@ def records():
                                 age=safe_int(row.get('age'), 0),
                                 sex=str(row.get('sex') or 'Unavailable').strip() or 'Unavailable',
                                 clinical_classification=str(row.get('clinical_classification') or 'Unavailable').strip() or 'Unavailable',
+                                case_classification=str(row.get('case_classification') or 'Unavailable').strip() or 'Unavailable',
                                 sync_status='Synced'
                             )
                             db.session.add(record)
@@ -777,6 +786,7 @@ def reports():
 
     yearly_availability_summary = get_yearly_data_availability(DengueRecord.query.all())
     summary_for_year = get_report_summary_for_year(selected_year) if selected_year is not None else None
+    year_records = DengueRecord.query.filter(DengueRecord.year == selected_year).order_by(DengueRecord.id.asc()).all() if selected_year is not None else []
     has_data = bool(summary_for_year and summary_for_year['total_records'] > 0)
 
     return render_template(
@@ -786,6 +796,7 @@ def reports():
         selected_year=selected_year,
         yearly_availability_summary=yearly_availability_summary,
         summary_for_year=summary_for_year,
+        year_records=year_records,
         has_data=has_data,
     )
 

@@ -63,6 +63,23 @@ class DataRepositoryRouteTest(unittest.TestCase):
             self.assertIn('/reports/cases.csv?year=2024', body)
             self.assertIn('/reports/cases.xlsx?year=2024', body)
 
+    def test_reports_page_shows_year_filtered_dataset_table(self):
+        with app.app_context():
+            db.session.add_all([
+                DengueRecord(case_id='R-2023-004', year=2023, morbidity_week=7, morbidity_month=2, district='Talomo', barangay='Bago Aplaya', age=27, sex='F', clinical_classification='Dengue without Warning Signs', case_classification='Confirmed', sync_status='Synced'),
+                DengueRecord(case_id='R-2024-002', year=2024, morbidity_week=8, morbidity_month=3, district='Matina', barangay='Matina', age=31, sex='M', clinical_classification='Dengue with Warning Signs', case_classification='Probable', sync_status='Synced'),
+            ])
+            db.session.commit()
+
+        with app.test_client() as client:
+            client.post('/login', data={'username': 'repoadmin', 'password': 'pass'}, follow_redirects=False)
+            response = client.get('/reports?year=2024')
+            body = response.get_data(as_text=True)
+            self.assertEqual(response.status_code, 200)
+            self.assertIn('R-2024-002', body)
+            self.assertNotIn('R-2023-004', body)
+            self.assertIn('Case Classification', body)
+
     def test_admin_permission_is_labeled_archive(self):
         with app.test_client() as client:
             client.post('/login', data={'username': 'repoadmin', 'password': 'pass'}, follow_redirects=False)
