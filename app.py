@@ -1,8 +1,8 @@
 import os
 import re
 from io import BytesIO, StringIO
-from datetime import datetime
-from flask import Flask, render_template, request, redirect, url_for, flash, send_file
+from datetime import date, datetime, timedelta
+from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from sqlalchemy import text, or_
@@ -144,33 +144,186 @@ def logout():
 # ==========================================
 
 # Screen 2: Main Surveillance Dashboard (Tiers 1, 2, & 3)
+NULL_LIKE_VALUES = {'', 'nan', 'n/a', 'na', 'null', 'none', 'unavailable'}
+
+
+def is_available_dashboard_value(value):
+    return value is not None and str(value).strip().lower() not in NULL_LIKE_VALUES
+
+
+def get_morbidity_week_date_range(year, morbidity_week):
+    year_start = date(year, 1, 1)
+    first_week_start = year_start - timedelta(days=(year_start.weekday() + 1) % 7)
+    week_start = first_week_start + timedelta(weeks=morbidity_week - 1)
+    week_end = week_start + timedelta(days=6)
+    start_label = f'{week_start.strftime("%b")} {week_start.day}'
+    end_label = f'{week_end.strftime("%b")} {week_end.day}, {week_end.year}'
+    return f'{start_label} \u2013 {end_label}'
+
+
+def evaluate_dashboard_alert(current_count, baseline_threshold):
+    pre_surge_threshold = round(0.75 * baseline_threshold, 2)
+    if current_count == 0 and baseline_threshold == 0:
+        return {
+            'risk_level': 'GREEN',
+            'risk_label': 'No Data / Normal State',
+            'recommendation': 'No baseline cases are available for comparison.',
+            'action_required': 'Action Required: Continue routine monitoring while awaiting reported case data.',
+        }
+    if current_count < pre_surge_threshold:
+        return {
+            'risk_level': 'GREEN',
+            'risk_label': 'Normal State',
+            'recommendation': 'Routine Monitoring',
+            'action_required': 'Action Required: Continue routine monitoring and community prevention activities.',
+        }
+    if current_count <= baseline_threshold:
+        return {
+            'risk_level': 'YELLOW',
+            'risk_label': 'Warning State',
+            'recommendation': 'Pre-surge Advisory',
+            'action_required': 'Action Required: Issue a pre-surge advisory and increase local surveillance.',
+        }
+    return {
+        'risk_level': 'RED',
+        'risk_label': 'Surge State',
+        'recommendation': 'Threshold Breach & Targeted Intervention',
+        'action_required': 'Action Required: Initiate targeted vector control and localized response.',
+    }
+
+
+def get_dashboard_trend(current_year=None):
+    current_year = current_year or datetime.now().year
+    baseline_years = (2023, 2024, 2025)
+    grouped_counts = db.session.query(
+        DengueRecord.year,
+        DengueRecord.morbidity_week,
+        db.func.count(DengueRecord.id),
+    ).filter(
+        DengueRecord.year.in_(baseline_years + (current_year,)),
+        DengueRecord.morbidity_week.isnot(None),
+        DengueRecord.morbidity_week.between(1, 52),
+    ).group_by(DengueRecord.year, DengueRecord.morbidity_week).all()
+
+    counts_by_year_week = {
+        (int(year), int(week)): int(count)
+        for year, week, count in grouped_counts
+        if year is not None and week is not None
+    }
+    current_actual = [counts_by_year_week.get((current_year, week), 0) for week in range(1, 53)]
+    historical_values = [
+        [counts_by_year_week.get((year, week), 0) for year in baseline_years]
+        for week in range(1, 53)
+    ]
+    median = [round(pd.Series(values, dtype='float64').quantile(0.5), 2) for values in historical_values]
+    percentile_75 = [round(pd.Series(values, dtype='float64').quantile(0.75), 2) for values in historical_values]
+
+    grouped_month_counts = db.session.query(
+        DengueRecord.year,
+        DengueRecord.morbidity_month,
+        db.func.count(DengueRecord.id),
+    ).filter(
+        DengueRecord.year.in_(baseline_years + (current_year,)),
+        DengueRecord.morbidity_month.isnot(None),
+        DengueRecord.morbidity_month.between(1, 12),
+    ).group_by(DengueRecord.year, DengueRecord.morbidity_month).all()
+    counts_by_year_month = {
+        (int(year), int(month)): int(count)
+        for year, month, count in grouped_month_counts
+        if year is not None and month is not None
+    }
+    monthly_actual = [counts_by_year_month.get((current_year, month), 0) for month in range(1, 13)]
+    monthly_baseline_values = [
+        [counts_by_year_month.get((year, month), 0) for year in baseline_years]
+        for month in range(1, 13)
+    ]
+    monthly_median = [round(pd.Series(values, dtype='float64').quantile(0.5), 2) for values in monthly_baseline_values]
+    monthly_percentile_75 = [round(pd.Series(values, dtype='float64').quantile(0.75), 2) for values in monthly_baseline_values]
+
+    current_week = min(datetime.now().isocalendar().week, 52)
+    current_index = current_week - 1
+    current_count = current_actual[current_index]
+    current_median = median[current_index]
+    current_threshold = percentile_75[current_index]
+    alert = evaluate_dashboard_alert(current_count, current_threshold)
+    week_date_range = get_morbidity_week_date_range(current_year, current_week)
+    has_baseline_data = any(any(values) for values in historical_values)
+
+    return {
+        'year': current_year,
+        'weeks': list(range(1, 53)),
+        'actual': current_actual,
+        'median': median,
+        'baseline_75th': percentile_75,
+        'monthly_actual': monthly_actual,
+        'monthly_median': monthly_median,
+        'monthly_baseline_75th': monthly_percentile_75,
+        'current_week': current_week,
+        'week_date_range': week_date_range,
+        'current_count': current_count,
+        'current_median': current_median,
+        'current_threshold': current_threshold,
+        'has_baseline_data': has_baseline_data,
+        'pre_surge_threshold': round(0.75 * current_threshold, 2),
+        **alert,
+    }
+
+
+@app.route('/api/dashboard/trend')
+@login_required
+def dashboard_trend_api():
+    requested_year = request.args.get('year', type=int)
+    return jsonify(get_dashboard_trend(requested_year))
+
+
 @app.route('/dashboard')
 @login_required
 def dashboard():
     page = request.args.get('page', 1, type=int)
     page = max(page, 1)
+    requested_year = request.args.get('year', type=int)
 
     records_list = DengueRecord.query.all()
     confirmed_cases = DengueRecord.query.filter(
-        db.func.lower(DengueRecord.case_classification).contains('confirmed')
+        DengueRecord.case_classification.isnot(None),
+        db.func.lower(DengueRecord.case_classification).contains('confirmed'),
     ).count()
-    clusters = sorted({record.barangay for record in records_list if record.barangay})
+    barangay_counts = {}
+    for record in records_list:
+        if is_available_dashboard_value(record.barangay):
+            barangay = str(record.barangay).strip()
+            barangay_counts[barangay] = barangay_counts.get(barangay, 0) + 1
+    clusters = sorted(barangay_counts)
+    age_distribution = {
+        '0-17': 0,
+        '18-34': 0,
+        '35-54': 0,
+        '55+': 0,
+    }
+    for record in records_list:
+        if record.age is None or str(record.age).strip().lower() in NULL_LIKE_VALUES:
+            continue
+        try:
+            age = int(record.age)
+        except (TypeError, ValueError):
+            continue
+        bucket = '0-17' if age < 18 else '18-34' if age < 35 else '35-54' if age < 55 else '55+'
+        age_distribution[bucket] += 1
     per_page = 10
     total_clusters = len(clusters)
     total_pages = max(1, (total_clusters + per_page - 1) // per_page) if clusters else 1
     page = min(page, total_pages)
     start = (page - 1) * per_page
     end = start + per_page
-    cluster_page = clusters[start:end]
+    cluster_page = [
+        {'name': barangay, 'count': barangay_counts[barangay]}
+        for barangay in clusters[start:end]
+    ]
 
-    week_counts = db.session.query(
-        DengueRecord.morbidity_week,
-        db.func.count(DengueRecord.id)
-    ).filter(DengueRecord.morbidity_week.isnot(None)).group_by(DengueRecord.morbidity_week).all()
-    week_counts_map = {int(week): count for week, count in week_counts if week is not None and 1 <= int(week) <= 52}
+    trend = get_dashboard_trend(requested_year)
     morbidity_week_trends = [
-        {'week': week, 'count': week_counts_map.get(week, 0)}
-        for week in range(1, 53)
+        {'week': week, 'count': count}
+        for week, count in zip(trend['weeks'], trend['actual'])
     ]
 
     return render_template(
@@ -180,10 +333,13 @@ def dashboard():
         confirmed_cases=confirmed_cases,
         clusters=cluster_page,
         all_clusters=clusters,
+        barangay_counts=barangay_counts,
         total_clusters=total_clusters,
         page=page,
         total_pages=total_pages,
         morbidity_week_trends=morbidity_week_trends,
+        trend=trend,
+        age_distribution=age_distribution,
     )
 
 # Screen 3: Data Entry, CSV Ingestion, and Offline Sync
