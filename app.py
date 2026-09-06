@@ -151,6 +151,17 @@ def is_available_dashboard_value(value):
     return value is not None and str(value).strip().lower() not in NULL_LIKE_VALUES
 
 
+def get_dashboard_years():
+    return [
+        int(year)
+        for year, in db.session.query(DengueRecord.year)
+        .filter(DengueRecord.year.isnot(None))
+        .distinct()
+        .order_by(DengueRecord.year.asc())
+        .all()
+    ]
+
+
 def get_morbidity_week_date_range(year, morbidity_week):
     year_start = date(year, 1, 1)
     first_week_start = year_start - timedelta(days=(year_start.weekday() + 1) % 7)
@@ -194,7 +205,10 @@ def evaluate_dashboard_alert(current_count, baseline_threshold):
 
 def get_dashboard_trend(current_year=None):
     current_year = current_year or datetime.now().year
-    baseline_years = (2023, 2024, 2025)
+    baseline_years = tuple(year for year in get_dashboard_years() if year < current_year)
+    def calculate_quantile(values, quantile):
+        return round(pd.Series(values, dtype='float64').quantile(quantile), 2) if values else 0
+
     grouped_counts = db.session.query(
         DengueRecord.year,
         DengueRecord.morbidity_week,
@@ -215,8 +229,8 @@ def get_dashboard_trend(current_year=None):
         [counts_by_year_week.get((year, week), 0) for year in baseline_years]
         for week in range(1, 53)
     ]
-    median = [round(pd.Series(values, dtype='float64').quantile(0.5), 2) for values in historical_values]
-    percentile_75 = [round(pd.Series(values, dtype='float64').quantile(0.75), 2) for values in historical_values]
+    median = [calculate_quantile(values, 0.5) for values in historical_values]
+    percentile_75 = [calculate_quantile(values, 0.75) for values in historical_values]
 
     grouped_month_counts = db.session.query(
         DengueRecord.year,
@@ -237,17 +251,31 @@ def get_dashboard_trend(current_year=None):
         [counts_by_year_month.get((year, month), 0) for year in baseline_years]
         for month in range(1, 13)
     ]
-    monthly_median = [round(pd.Series(values, dtype='float64').quantile(0.5), 2) for values in monthly_baseline_values]
-    monthly_percentile_75 = [round(pd.Series(values, dtype='float64').quantile(0.75), 2) for values in monthly_baseline_values]
+    monthly_median = [calculate_quantile(values, 0.5) for values in monthly_baseline_values]
+    monthly_percentile_75 = [calculate_quantile(values, 0.75) for values in monthly_baseline_values]
 
-    current_week = min(datetime.now().isocalendar().week, 52)
+    active_year = datetime.now().year
+    if current_year == active_year:
+        reported_weeks = [week for week, count in zip(range(1, 53), current_actual) if count > 0]
+        current_week = max(reported_weeks) if reported_weeks else min(datetime.now().isocalendar().week, 52)
+    else:
+        peak_count = max(current_actual, default=0)
+        current_week = current_actual.index(peak_count) + 1 if peak_count > 0 else 52
     current_index = current_week - 1
     current_count = current_actual[current_index]
     current_median = median[current_index]
     current_threshold = percentile_75[current_index]
-    alert = evaluate_dashboard_alert(current_count, current_threshold)
+    has_baseline_data = bool(baseline_years) and any(any(values) for values in historical_values)
+    if not has_baseline_data:
+        alert = {
+            'risk_level': 'BLUE',
+            'risk_label': 'Historical Baseline',
+            'recommendation': 'Historical baseline reference only.',
+            'action_required': 'Insufficient prior historical data to establish a P75 epidemic threshold.',
+        }
+    else:
+        alert = evaluate_dashboard_alert(current_count, current_threshold)
     week_date_range = get_morbidity_week_date_range(current_year, current_week)
-    has_baseline_data = any(any(values) for values in historical_values)
 
     return {
         'year': current_year,
@@ -282,14 +310,18 @@ def dashboard():
     page = request.args.get('page', 1, type=int)
     page = max(page, 1)
     requested_year = request.args.get('year', type=int)
+    available_years = get_dashboard_years()
+    selected_year = requested_year if requested_year in available_years else (available_years[-1] if available_years else datetime.now().year)
 
-    records_list = DengueRecord.query.all()
-    confirmed_cases = DengueRecord.query.filter(
-        DengueRecord.case_classification.isnot(None),
-        db.func.lower(DengueRecord.case_classification).contains('confirmed'),
-    ).count()
+    records_list = DengueRecord.query.filter(DengueRecord.year == selected_year).all()
+    confirmed_records = [
+        record for record in records_list
+        if is_available_dashboard_value(record.case_classification)
+        and 'confirmed' in str(record.case_classification).lower()
+    ]
+    confirmed_cases = len(confirmed_records)
     barangay_counts = {}
-    for record in records_list:
+    for record in confirmed_records:
         if is_available_dashboard_value(record.barangay):
             barangay = str(record.barangay).strip()
             barangay_counts[barangay] = barangay_counts.get(barangay, 0) + 1
@@ -300,12 +332,14 @@ def dashboard():
         '35-54': 0,
         '55+': 0,
     }
-    for record in records_list:
+    for record in confirmed_records:
         if record.age is None or str(record.age).strip().lower() in NULL_LIKE_VALUES:
+            age_distribution['Unavailable'] = age_distribution.get('Unavailable', 0) + 1
             continue
         try:
             age = int(record.age)
         except (TypeError, ValueError):
+            age_distribution['Unavailable'] = age_distribution.get('Unavailable', 0) + 1
             continue
         bucket = '0-17' if age < 18 else '18-34' if age < 35 else '35-54' if age < 55 else '55+'
         age_distribution[bucket] += 1
@@ -320,7 +354,7 @@ def dashboard():
         for barangay in clusters[start:end]
     ]
 
-    trend = get_dashboard_trend(requested_year)
+    trend = get_dashboard_trend(selected_year)
     morbidity_week_trends = [
         {'week': week, 'count': count}
         for week, count in zip(trend['weeks'], trend['actual'])
@@ -340,6 +374,8 @@ def dashboard():
         morbidity_week_trends=morbidity_week_trends,
         trend=trend,
         age_distribution=age_distribution,
+        available_years=available_years,
+        selected_year=selected_year,
     )
 
 # Screen 3: Data Entry, CSV Ingestion, and Offline Sync
