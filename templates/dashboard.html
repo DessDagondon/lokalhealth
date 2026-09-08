@@ -23,14 +23,21 @@
 
 {% set risk_classes = {'GREEN': 'success', 'YELLOW': 'warning', 'RED': 'danger', 'BLUE': 'info'} %}
 <div class="alert alert-{{ risk_classes[trend.risk_level] }} border-0 shadow-sm mb-4" role="status">
-    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
-        <div>
+    <div class="alert-banner-content">
+        <div class="alert-left-content">
             <span class="badge text-bg-{{ risk_classes[trend.risk_level] }} mb-2">{{ trend.risk_level }} - {{ trend.risk_label }}</span>
             <h5 class="alert-heading mb-1 fw-bold">Early warning status for MW {{ trend.current_week }} ({{ trend.week_date_range }})</h5>
-            <div class="small">{{ trend.current_count }} reported cases | {% if trend.has_baseline_data %}Epidemic Threshold: {{ trend.current_threshold }}{% else %}No baseline threshold available{% endif %}</div>
-            <div class="small mt-1">{{ trend.action_required }}</div>
+            <div class="small">{{ trend.current_count }} reported cases | {% if trend.has_baseline_data and trend.current_threshold > 0 %}Epidemic Threshold: {{ trend.current_threshold }}{% else %}Baseline N/A{% endif %}</div>
+            <div id="dashboard-action-required" class="small mt-1">{{ trend.action_required }}</div>
         </div>
-        <strong class="small text-end">{{ trend.recommendation }}</strong>
+        <div class="alert-right-content text-end">
+            <strong class="small d-block">{{ trend.recommendation }}</strong>
+            <div id="dashboard-forecast" class="border rounded bg-white text-dark p-2 mt-2 small" data-year="{{ selected_year }}">
+                <span class="text-muted d-block">Next Week Case Projection</span>
+                <strong id="forecast-value">Loading...</strong>
+                <span id="forecast-direction" class="badge d-none mt-1" aria-live="polite"></span>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -159,6 +166,29 @@
         width: max-content;
         min-width: 100%;
     }
+
+    .alert-banner-content {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 1rem;
+        flex-wrap: wrap;
+    }
+
+    .alert-left-content {
+        min-width: 0;
+    }
+
+    .alert-right-content {
+        margin-left: auto;
+        flex: 0 0 auto;
+    }
+
+    #forecast-direction.badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 0.375rem;
+    }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
@@ -170,9 +200,14 @@
     const monthlyLabels = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
     const monthlyValues = trend.monthly_actual || [];
     const monthlyBaseline = trend.monthly_baseline_75th || [];
+    const forecastCard = document.getElementById('dashboard-forecast');
+    const forecastValue = document.getElementById('forecast-value');
+    const forecastDirection = document.getElementById('forecast-direction');
+    const actionRequired = document.getElementById('dashboard-action-required');
+    const baseActionRequired = actionRequired ? actionRequired.textContent : '';
 
     if (ctx) {
-        new Chart(ctx, {
+        const chart = new Chart(ctx, {
             type: 'line',
             data: {
                 labels: weeklyLabels,
@@ -193,6 +228,19 @@
                     fill: false,
                     tension: 0.3,
                     pointRadius: 0
+                }, {
+                    label: 'Next Week Projection',
+                    data: weeklyLabels.map(() => null),
+                    borderColor: '#198754',
+                    backgroundColor: '#198754',
+                    borderDash: [5, 5],
+                    fill: false,
+                    tension: 0,
+                    pointRadius: 5,
+                    pointHoverRadius: 7,
+                    pointStyle: 'circle',
+                    spanGaps: true,
+                    hidden: true
                 }]
             },
             options: {
@@ -207,12 +255,119 @@
                     }
                 },
                 plugins: {
-                    legend: { display: true }
+                    legend: {
+                        display: true,
+                        labels: {
+                            usePointStyle: true,
+                            filter: (legendItem, chartData) => !chartData.datasets[legendItem.datasetIndex].hidden
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: context => {
+                                const label = context.dataset.label || '';
+                                const value = context.raw;
+                                if (label === 'Next Week Projection' && typeof value === 'number') {
+                                    return `${label}: ${Math.round(value)}`;
+                                }
+                                return `${label}: ${context.formattedValue}`;
+                            }
+                        }
+                    }
                 }
             }
         });
 
-        const chart = Chart.getChart(ctx);
+        const forecastDataset = chart.data.datasets[2];
+        const weeklyForecastData = (forecastWeek, predictedCases) => {
+            const forecastIndex = forecastWeek - 1;
+            if (forecastIndex < 0 || forecastIndex >= weeklyLabels.length) {
+                return null;
+            }
+            const data = weeklyLabels.map(() => null);
+            data[Math.max(0, forecastIndex - 1)] = weeklyValues[Math.max(0, forecastIndex - 1)];
+            data[forecastIndex] = predictedCases;
+            return data;
+        };
+
+        const loadForecast = () => {
+            if (!forecastCard || !forecastValue || !forecastDirection || !actionRequired) {
+                return;
+            }
+            fetch(`/api/dashboard/forecast?year=${encodeURIComponent(forecastCard.dataset.year)}&week=${encodeURIComponent(trend.current_week)}`)
+                .then(response => response.ok ? response.json() : Promise.reject(new Error('Forecast unavailable')))
+                .then(forecast => {
+                    const hasPrediction = forecast.predicted_cases !== null
+                        && forecast.predicted_cases !== undefined
+                        && forecast.predicted_cases !== '';
+                    const predictedCases = hasPrediction ? Number(forecast.predicted_cases) : NaN;
+                    const displayForecastCases = Number.isFinite(predictedCases)
+                        ? Math.round(predictedCases)
+                        : null;
+                    const targetWeek = Number.isFinite(Number(forecast.target_week))
+                        ? Number(forecast.target_week)
+                        : null;
+                    if (displayForecastCases === null || targetWeek === null) {
+                        forecastValue.textContent = targetWeek === null
+                            ? 'Not enough weekly history'
+                            : `MW ${targetWeek}: Not enough weekly history`;
+                        forecastDirection.textContent = '';
+                        forecastDirection.className = 'badge d-none mt-1';
+                        actionRequired.textContent = baseActionRequired;
+                        return;
+                    }
+
+                    const currentCases = Math.round(Number(forecast.current_cases));
+                    const difference = Math.round(displayForecastCases - currentCases);
+                    const displayDifference = Math.abs(difference);
+                    let directionLabel;
+                    let directionClass;
+                    let trajectoryNote;
+                    if (difference < 0) {
+                        directionLabel = `▼ -${displayDifference} cases`;
+                        directionClass = 'bg-success-subtle text-success-emphasis';
+                        trajectoryNote = 'Forward projection indicates de-escalating case activity.';
+                    } else if (difference > 0) {
+                        directionLabel = `▲ +${displayDifference} cases`;
+                        directionClass = 'bg-danger-subtle text-danger-emphasis';
+                        trajectoryNote = 'Forward projection indicates accelerating case activity.';
+                    } else {
+                        directionLabel = '━ No change';
+                        directionClass = 'bg-secondary-subtle text-secondary-emphasis';
+                        trajectoryNote = 'Forward projection indicates stable case activity.';
+                    }
+
+                    forecastValue.textContent = `MW ${targetWeek}: ${displayForecastCases} cases`;
+                    forecastDirection.textContent = directionLabel;
+                    forecastDirection.className = `badge ${directionClass} mt-1`;
+                    actionRequired.textContent = `${baseActionRequired} ${trajectoryNote}`;
+                    if (forecast.predicted_cases !== null) {
+                        const forecastIndex = targetWeek - 1;
+                        if (forecastIndex >= weeklyLabels.length) {
+                            weeklyLabels.push(`MW ${targetWeek}`);
+                            weeklyValues.push(null);
+                            trend.baseline_75th.push(null);
+                            chart.data.labels.push(`MW ${targetWeek}`);
+                            chart.data.datasets[0].data.push(null);
+                            chart.data.datasets[1].data.push(null);
+                        }
+                        const forecastData = weeklyForecastData(targetWeek, predictedCases);
+                        if (forecastData) {
+                            forecastDataset.data = forecastData;
+                            forecastDataset.hidden = false;
+                            chart.update();
+                        }
+                    }
+                })
+                .catch(() => {
+                    forecastValue.textContent = 'Unavailable';
+                    forecastDirection.textContent = '';
+                    forecastDirection.className = 'badge d-none mt-1';
+                    actionRequired.textContent = baseActionRequired;
+                });
+        };
+
+        loadForecast();
         const periodButtons = document.querySelectorAll('.trend-period-button');
         periodButtons.forEach(button => {
             button.addEventListener('click', () => {
@@ -220,6 +375,7 @@
                 chart.data.labels = monthly ? monthlyLabels : weeklyLabels;
                 chart.data.datasets[0].data = monthly ? monthlyValues : weeklyValues;
                 chart.data.datasets[1].data = monthly ? monthlyBaseline : trend.baseline_75th;
+                forecastDataset.hidden = monthly;
                 periodButtons.forEach(periodButton => {
                     const active = periodButton === button;
                     periodButton.classList.toggle('btn-primary', active);

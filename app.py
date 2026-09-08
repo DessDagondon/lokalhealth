@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from sklearn.ensemble import RandomForestRegressor
 from sqlalchemy import text, or_
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -302,6 +303,83 @@ def get_dashboard_trend(current_year=None):
 def dashboard_trend_api():
     requested_year = request.args.get('year', type=int)
     return jsonify(get_dashboard_trend(requested_year))
+
+
+@app.route('/api/dashboard/forecast')
+@login_required
+def dashboard_forecast_api():
+    requested_year = request.args.get('year', type=int)
+    current_year = requested_year or datetime.now().year
+    trend = get_dashboard_trend(current_year)
+    requested_week = request.args.get('week', type=int)
+    current_week = requested_week if requested_week and 1 <= requested_week <= 52 else trend['current_week']
+    target_week = current_week + 1
+
+    grouped_counts = db.session.query(
+        DengueRecord.morbidity_week,
+        db.func.count(DengueRecord.id),
+    ).filter(
+        DengueRecord.year == current_year,
+        DengueRecord.morbidity_week.isnot(None),
+        DengueRecord.morbidity_week.between(1, 52),
+    ).group_by(DengueRecord.morbidity_week).order_by(DengueRecord.morbidity_week).all()
+
+    if len(grouped_counts) < 4:
+        return jsonify({
+            'current_week': current_week,
+            'target_week': target_week,
+            'current_cases': None,
+            'predicted_cases': None,
+            'diff': None,
+        })
+
+    counts_by_week = {int(week): int(count) for week, count in grouped_counts}
+    if current_week not in counts_by_week:
+        return jsonify({
+            'current_week': current_week,
+            'target_week': target_week,
+            'current_cases': None,
+            'predicted_cases': None,
+            'diff': None,
+        })
+
+    latest_cases = counts_by_week[current_week]
+    weekly_counts = pd.DataFrame({
+        'morbidity_week': list(range(1, current_week + 1)),
+        'case_count': [counts_by_week.get(week, 0) for week in range(1, current_week + 1)],
+    })
+    weekly_counts['lag_1'] = weekly_counts['case_count'].shift(1)
+    weekly_counts['lag_2'] = weekly_counts['case_count'].shift(2)
+    training_data = weekly_counts.dropna()
+    if training_data.empty:
+        return jsonify({
+            'current_week': current_week,
+            'target_week': target_week,
+            'current_cases': latest_cases,
+            'predicted_cases': None,
+            'diff': None,
+        })
+
+    model = RandomForestRegressor(n_estimators=100, random_state=42)
+    model.fit(
+        training_data[['lag_1', 'lag_2', 'morbidity_week']],
+        training_data['case_count'],
+    )
+    latest_counts = weekly_counts.iloc[-1]
+    forecast = model.predict(pd.DataFrame([{
+        'lag_1': latest_counts['case_count'],
+        'lag_2': latest_counts['lag_1'],
+        'morbidity_week': target_week,
+    }]))[0]
+    predicted_cases = round(max(0, float(forecast)), 2)
+
+    return jsonify({
+        'current_week': current_week,
+        'target_week': target_week,
+        'current_cases': latest_cases,
+        'predicted_cases': predicted_cases,
+        'diff': round(predicted_cases - latest_cases, 2),
+    })
 
 
 @app.route('/dashboard')

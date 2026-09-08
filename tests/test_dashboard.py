@@ -96,7 +96,7 @@ class DashboardWarningStateTest(unittest.TestCase):
             body = response.get_data(as_text=True)
             self.assertEqual(response.status_code, 200)
             self.assertIn('BLUE - Historical Baseline', body)
-            self.assertIn('30 reported cases | No baseline threshold available', body)
+            self.assertIn('30 reported cases | Baseline N/A', body)
             self.assertIn('Insufficient prior historical data to establish a P75 epidemic threshold.', body)
 
             trend = client.get('/api/dashboard/trend?year=2023').get_json()
