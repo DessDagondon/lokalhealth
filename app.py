@@ -1,27 +1,89 @@
 import os
 import re
+import secrets
 from io import BytesIO, StringIO
 from datetime import date, datetime, timedelta
+import sys
 from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from sklearn.ensemble import RandomForestRegressor
-from sqlalchemy import text, or_
+from sqlalchemy import event, text, or_
+from sqlalchemy.engine import Engine
 from werkzeug.security import generate_password_hash, check_password_hash
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'lokalhealth-epidemiological-secret-key-2026'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+DB_PASSPHRASE = os.environ.get('DB_PASSPHRASE')
+
+def database_file_looks_encrypted():
+    database_path = os.path.join(app.instance_path, 'database.db')
+    try:
+        with open(database_path, 'rb') as database_file:
+            return database_file.read(16) != b'SQLite format 3\x00'
+    except OSError:
+        return False
+
+
+    # Guard: Block execution if an encrypted database file exists without a passphrase
+if not DB_PASSPHRASE and database_file_looks_encrypted():
+    print("\n" + "=" * 60)
+    print("FATAL ERROR: DB_PASSPHRASE environment variable is missing!")
+    print("The database is SQLCipher-encrypted and requires DB_PASSPHRASE.")
+    print("Please set DB_PASSPHRASE in your .env file or terminal.")
+    print("=" * 60 + "\n")
+    sys.exit(1)
+
+
+if not DB_PASSPHRASE and database_file_looks_encrypted():
+    raise RuntimeError(
+        'The database is SQLCipher-encrypted. Set DB_PASSPHRASE in this same terminal before starting app.py.'
+    )
+
+if DB_PASSPHRASE:
+    import sqlcipher3
+
+    encrypted_database_path = os.path.join(app.instance_path, 'database.db')
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite://'
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'creator': lambda: sqlcipher3.connect(encrypted_database_path),
+    }
+else:
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.db'
 
 db = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
 
+if DB_PASSPHRASE:
+    @event.listens_for(Engine, 'connect')
+    def set_sqlcipher_key(dbapi_connection, connection_record):
+        escaped_passphrase = DB_PASSPHRASE.replace("'", "''")
+        dbapi_connection.execute(f"PRAGMA key = '{escaped_passphrase}'")
+        cipher_version = dbapi_connection.execute('PRAGMA cipher_version').fetchone()
+        if not cipher_version or not cipher_version[0]:
+            raise RuntimeError('DB_PASSPHRASE requires a SQLCipher-enabled SQLite driver.')
+
+
 @app.before_request
 def ensure_admin_on_every_request():
+    migrate_user_table()
     ensure_primary_admin_account()
+
+
+@app.before_request
+def require_password_change_completion():
+    if (
+        current_user.is_authenticated
+        and current_user.must_change_password
+        and request.endpoint not in {'change_password', 'logout', 'static'}
+    ):
+        return redirect(url_for('change_password'))
 
 
 # ==========================================
@@ -39,6 +101,7 @@ class User(UserMixin, db.Model):
     can_edit = db.Column(db.Boolean, default=False)
     can_delete = db.Column(db.Boolean, default=False)
     is_blocked = db.Column(db.Boolean, default=False)
+    must_change_password = db.Column(db.Boolean, default=False, nullable=False)
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -73,6 +136,7 @@ def ensure_primary_admin_account():
                     can_edit=True,
                     can_delete=True,
                     is_blocked=False,
+                    must_change_password=False,
                 )
                 user.set_password('Admin123!')
                 db.session.add(user)
@@ -84,6 +148,7 @@ def ensure_primary_admin_account():
             existing.can_edit = True
             existing.can_delete = True
             existing.is_blocked = False
+            existing.must_change_password = False
             existing.set_password('Admin123!')
             db.session.commit()
             return True
@@ -122,11 +187,32 @@ def login():
             flash('This account has been blocked. Contact your System Administrator.', 'error')
         elif user and user.check_password(password):
             login_user(user)
+            if user.must_change_password:
+                return redirect(url_for('change_password'))
             return redirect(url_for('dashboard'))
         elif not user or not user.check_password(password):
             flash('Invalid username or password. Please try again.', 'error')
         
     return render_template('login.html')
+
+
+@app.route('/change-password', methods=['GET', 'POST'])
+@login_required
+def change_password():
+    if request.method == 'POST':
+        password = request.form.get('password', '')
+        confirmation = request.form.get('confirmation', '')
+        if len(password) < 8:
+            flash('Password must be at least 8 characters.', 'error')
+        elif password != confirmation:
+            flash('Passwords do not match.', 'error')
+        else:
+            current_user.set_password(password)
+            current_user.must_change_password = False
+            db.session.commit()
+            flash('Your password has been updated.', 'success')
+            return redirect(url_for('dashboard'))
+    return render_template('change_password.html')
 
 @app.route('/signup', methods=['GET', 'POST'])
 def signup():
@@ -1235,11 +1321,10 @@ def create_user():
         return redirect(url_for('dashboard'))
 
     username = request.form.get('username', '').strip()
-    password = request.form.get('password', '')
     role = request.form.get('role', 'Viewer')
 
-    if not username or not password:
-        flash('Username and password are required.', 'error')
+    if not username:
+        flash('Username is required.', 'error')
         return redirect(url_for('admin'))
     if role not in {'Admin', 'BHW', 'Viewer'}:
         flash('Invalid user role selected.', 'error')
@@ -1254,11 +1339,13 @@ def create_user():
         can_create=request.form.get('can_create') == 'on',
         can_edit=request.form.get('can_edit') == 'on',
         can_delete=request.form.get('can_delete') == 'on',
+        must_change_password=True,
     )
-    new_user.set_password(password)
+    temporary_password = secrets.token_urlsafe(10)
+    new_user.set_password(temporary_password)
     db.session.add(new_user)
     db.session.commit()
-    flash(f'Account created for {username}.', 'info')
+    flash(f'Account created for {username}. Temporary password: {temporary_password}', 'info')
     return redirect(url_for('admin'))
 
 @app.route('/admin/reset_password/<int:user_id>', methods=['POST'])
@@ -1268,19 +1355,16 @@ def reset_password(user_id):
         flash('Unauthorized access: Admin permissions required.', 'error')
         return redirect(url_for('dashboard'))
 
-    new_password = request.form.get('new_password', '')
-    if not new_password.strip():
-        flash('A new password is required.', 'error')
-        return redirect(url_for('admin'))
-
     user_item = db.session.get(User, user_id)
     if user_item is None:
         flash('User account not found.', 'error')
         return redirect(url_for('admin'))
 
-    user_item.password_hash = generate_password_hash(new_password)
+    temporary_password = secrets.token_urlsafe(10)
+    user_item.password_hash = generate_password_hash(temporary_password)
+    user_item.must_change_password = True
     db.session.commit()
-    flash(f'Password reset successfully for {user_item.username}.', 'info')
+    flash(f'Password reset for {user_item.username}. Temporary password: {temporary_password}', 'info')
     return redirect(url_for('admin'))
 
 @app.route('/admin/users/<int:user_id>/toggle-block', methods=['POST'])
@@ -1389,6 +1473,7 @@ def migrate_user_table():
         'can_edit': 'BOOLEAN DEFAULT 0',
         'can_delete': 'BOOLEAN DEFAULT 0',
         'is_blocked': 'BOOLEAN DEFAULT 0',
+        'must_change_password': 'BOOLEAN DEFAULT 0',
     }
 
     with db.engine.begin() as connection:

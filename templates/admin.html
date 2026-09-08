@@ -14,10 +14,6 @@
                 <label for="new-username" class="form-label">Username</label>
                 <input type="text" class="form-control" id="new-username" name="username" required>
             </div>
-            <div class="col-md-3">
-                <label for="new-password" class="form-label">Temporary password</label>
-                <input type="password" class="form-control" id="new-password" name="password" required>
-            </div>
             <div class="col-md-2">
                 <label for="new-role" class="form-label">Role</label>
                 <select class="form-select" id="new-role" name="role">
@@ -165,8 +161,7 @@
                                         </div>
                                         <form method="POST" action="{{ url_for('reset_password', user_id=user_item.id) }}">
                                             <div class="modal-body">
-                                                <label for="new-password{{ user_item.id }}" class="form-label">New password</label>
-                                                <input type="password" class="form-control" id="new-password{{ user_item.id }}" name="new_password" required autocomplete="new-password">
+                                                A secure temporary password will be generated and shown once after reset.
                                             </div>
                                             <div class="modal-footer">
                                                 <button type="button" class="btn btn-light btn-sm" data-bs-dismiss="modal">Cancel</button>
@@ -186,8 +181,7 @@
                                         </div>
                                         <form method="POST" action="{{ url_for('reset_password', user_id=user_item.id) }}">
                                             <div class="modal-body">
-                                                <label for="new-password{{ user_item.id }}" class="form-label">New password</label>
-                                                <input type="password" class="form-control" id="new-password{{ user_item.id }}" name="new_password" required autocomplete="new-password">
+                                                A secure temporary password will be generated and shown once after reset.
                                             </div>
                                             <div class="modal-footer">
                                                 <button type="button" class="btn btn-light btn-sm" data-bs-dismiss="modal">Cancel</button>
