@@ -304,6 +304,7 @@ def get_dashboard_trend(current_year=None):
         DengueRecord.year.in_(baseline_years + (current_year,)),
         DengueRecord.morbidity_week.isnot(None),
         DengueRecord.morbidity_week.between(1, 52),
+        DengueRecord.case_classification.ilike('%confirmed%')
     ).group_by(DengueRecord.year, DengueRecord.morbidity_week).all()
 
     counts_by_year_week = {
@@ -408,6 +409,7 @@ def dashboard_forecast_api():
         DengueRecord.year == current_year,
         DengueRecord.morbidity_week.isnot(None),
         DengueRecord.morbidity_week.between(1, 52),
+        DengueRecord.case_classification.ilike('%confirmed%')
     ).group_by(DengueRecord.morbidity_week).order_by(DengueRecord.morbidity_week).all()
 
     if len(grouped_counts) < 4:
@@ -484,12 +486,57 @@ def dashboard():
         and 'confirmed' in str(record.case_classification).lower()
     ]
     confirmed_cases = len(confirmed_records)
+    
+    # Calculate trend and active morbidity week
+    trend = get_dashboard_trend(selected_year)
+    active_week = trend['current_week']
+
+    # 1. Calculate cumulative YTD and active week cases per barangay
     barangay_counts = {}
+    active_week_counts = {}
     for record in confirmed_records:
         if is_available_dashboard_value(record.barangay):
             barangay = str(record.barangay).strip()
             barangay_counts[barangay] = barangay_counts.get(barangay, 0) + 1
+            
+            try:
+                rec_week = int(record.morbidity_week) if record.morbidity_week else None
+                if rec_week == active_week:
+                    active_week_counts[barangay] = active_week_counts.get(barangay, 0) + 1
+            except (ValueError, TypeError):
+                continue
+
     clusters = sorted(barangay_counts)
+
+    # 2. Build Intervention Priority Watchlist using active week metrics
+    watchlist = []
+    for barangay in clusters:
+        active_cases = active_week_counts.get(barangay, 0)
+        total_ytd = barangay_counts.get(barangay, 0)
+
+        # Assign risk status tags based on active week case volume
+        if active_cases >= 5:
+            status = 'SURGE'
+            status_color = 'danger'
+        elif active_cases >= 2:
+            status = 'RISING'
+            status_color = 'warning'
+        else:
+            status = 'STABLE'
+            status_color = 'success'
+
+        watchlist.append({
+            'name': barangay,
+            'active_cases': active_cases,
+            'total_ytd': total_ytd,
+            'status': status,
+            'status_color': status_color
+        })
+
+    # Sort watchlist: Active Week Cases (descending) first, then Total YTD (descending)
+    watchlist.sort(key=lambda x: (x['active_cases'], x['total_ytd']), reverse=True)
+
+    # Age distribution calculations
     age_distribution = {
         '0-17': 0,
         '18-34': 0,
@@ -507,6 +554,8 @@ def dashboard():
             continue
         bucket = '0-17' if age < 18 else '18-34' if age < 35 else '35-54' if age < 55 else '55+'
         age_distribution[bucket] += 1
+
+    # Pagination logic
     per_page = 10
     total_clusters = len(clusters)
     total_pages = max(1, (total_clusters + per_page - 1) // per_page) if clusters else 1
@@ -518,7 +567,6 @@ def dashboard():
         for barangay in clusters[start:end]
     ]
 
-    trend = get_dashboard_trend(selected_year)
     morbidity_week_trends = [
         {'week': week, 'count': count}
         for week, count in zip(trend['weeks'], trend['actual'])
@@ -540,6 +588,8 @@ def dashboard():
         age_distribution=age_distribution,
         available_years=available_years,
         selected_year=selected_year,
+        watchlist=watchlist,
+        active_week=active_week,
     )
 
 # Screen 3: Data Entry, CSV Ingestion, and Offline Sync

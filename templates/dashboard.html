@@ -108,20 +108,25 @@
     </div>
     <div class="col-md-4">
         <div class="card border-0 shadow-sm p-4 h-100">
-            <h5 class="fw-bold mb-3">Risk Distribution</h5>
+            <h5 class="fw-bold mb-3">Intervention Priority Watchlist</h5>
             <div class="list-group list-group-flush">
-                {% for barangay in clusters %}
-                <div class="list-group-item d-flex justify-content-between align-items-center bg-transparent px-0">
-                    <span>{{ barangay.name }}</span>
-                    <span class="badge bg-secondary">{{ barangay.count }} cases</span>
+                {% for item in watchlist[(page - 1) * 10 : page * 10] %}
+                <div class="list-group-item d-flex justify-content-between align-items-center bg-transparent px-0 py-2">
+                    <div class="me-2">
+                        <div class="fw-semibold text-dark">{{ item.name }}</div>
+                        <small class="text-muted">
+                            {{ item.active_cases }} active (MW {{ active_week }}) &bull; {{ item.total_ytd }} YTD
+                        </small>
+                    </div>
+                    <span class="badge bg-{{ item.status_color }}">{{ item.status }}</span>
                 </div>
                 {% else %}
-                <p class="text-muted mb-0">No risk distribution available</p>
+                <p class="text-muted mb-0">No intervention priorities identified</p>
                 {% endfor %}
             </div>
 
-            {% if all_clusters and total_pages > 1 %}
-            <nav aria-label="Risk distribution pagination" class="mt-3 dashboard-pagination">
+            {% if watchlist and total_pages > 1 %}
+            <nav aria-label="Intervention priority watchlist pagination" class="mt-3 dashboard-pagination">
                 <ul class="pagination pagination-sm justify-content-center flex-nowrap mb-0">
                     {% if page > 1 %}
                     <li class="page-item"><a class="page-link" href="{{ url_for('dashboard', page=page-1, year=selected_year) }}">Previous</a></li>
