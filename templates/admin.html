@@ -29,10 +29,6 @@
                         <label class="form-check-label" for="new-can-create">Create</label>
                     </div>
                     <div class="form-check">
-                        <input class="form-check-input" type="checkbox" id="new-can-edit" name="can_edit">
-                        <label class="form-check-label" for="new-can-edit">Edit</label>
-                    </div>
-                    <div class="form-check">
                         <input class="form-check-input" type="checkbox" id="new-can-delete" name="can_delete">
                         <label class="form-check-label" for="new-can-delete">Archive</label>
                     </div>
@@ -81,9 +77,6 @@
                             {% if user_item.can_create %}
                                 <span class="badge bg-success-subtle text-success border border-success">Create</span>
                             {% endif %}
-                            {% if user_item.can_edit %}
-                                <span class="badge bg-warning-subtle text-warning border border-warning">Edit</span>
-                            {% endif %}
                             {% if user_item.can_delete %}
                                 <span class="badge bg-danger-subtle text-danger border border-danger">Archive</span>
                             {% endif %}
@@ -131,11 +124,6 @@
                                                 <div class="form-check form-switch mb-2">
                                                     <input class="form-check-input" type="checkbox" id="can_create{{ user_item.id }}" name="can_create" {% if user_item.can_create %}checked{% endif %}>
                                                     <label class="form-check-label fw-semibold" for="can_create{{ user_item.id }}">Can Create / Ingest Records</label>
-                                                </div>
-
-                                                <div class="form-check form-switch mb-2">
-                                                    <input class="form-check-input" type="checkbox" id="can_edit{{ user_item.id }}" name="can_edit" {% if user_item.can_edit %}checked{% endif %}>
-                                                    <label class="form-check-label fw-semibold" for="can_edit{{ user_item.id }}">Can Edit Existing Records</label>
                                                 </div>
 
                                                 <div class="form-check form-switch mb-2">
