@@ -50,10 +50,13 @@ if DB_PASSPHRASE:
     encrypted_database_path = os.path.join(app.instance_path, 'database.db')
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite://'
     app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-        'creator': lambda: sqlcipher3.connect(encrypted_database_path),
+        'creator': lambda: sqlcipher3.connect(encrypted_database_path, check_same_thread=False),
     }
 else:
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.db'
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'connect_args': {'check_same_thread': False}
+    }
 
 db = SQLAlchemy(app)
 login_manager = LoginManager(app)
@@ -72,7 +75,6 @@ if DB_PASSPHRASE:
 
 @app.before_request
 def ensure_admin_on_every_request():
-    migrate_user_table()
     ensure_primary_admin_account()
 
 
@@ -284,7 +286,7 @@ def evaluate_dashboard_alert(current_count, baseline_threshold):
         }
     return {
         'risk_level': 'RED',
-        'risk_label': 'Surge State',
+        'risk_label': 'High-Risk State',
         'recommendation': 'Threshold Breach & Targeted Intervention',
         'action_required': 'Action Required: Initiate targeted vector control and localized response.',
     }

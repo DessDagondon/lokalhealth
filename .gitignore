@@ -16,4 +16,14 @@ __pycache__/
 .vscode/
 .env
 
+*.ipynb
 
+*.xlsx
+*.csv
+
+ml_experiments._1.ipynb
+
+forATENEO_DENGUE_2023.xlsx
+forATENEO_DENGUE_2024.xlsx
+forATENEO_DENGUE_2025.xlsx
+forATENEO_DENGUE_2026.xlsx
