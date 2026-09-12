@@ -644,8 +644,6 @@ def get_yearly_data_availability(records=None):
                 return None
             return text
         if isinstance(value, (int, float)):
-            if value == 0:
-                return None
             return value
         return value
 
@@ -756,8 +754,8 @@ def get_report_summary_for_year(year_value):
             },
             'Age': {
                 'total': total_records,
-                'available': sum(1 for record in records_list if record.age is not None and str(record.age).strip().lower() not in {'', '0', '0.0', 'nan', 'n/a', 'na', 'null', 'none', 'unavailable'}),
-                'unavailable': sum(1 for record in records_list if record.age is None or str(record.age).strip().lower() in {'', '0', '0.0', 'nan', 'n/a', 'na', 'null', 'none', 'unavailable'}),
+                'available': sum(1 for record in records_list if record.age is not None and str(record.age).strip().lower() not in {'', 'nan', 'n/a', 'na', 'null', 'none', 'unavailable'}),
+                'unavailable': sum(1 for record in records_list if record.age is None or str(record.age).strip().lower() in {'', 'nan', 'n/a', 'na', 'null', 'none', 'unavailable'}),
             },
         },
     }
