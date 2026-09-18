@@ -13,7 +13,7 @@ from sqlalchemy.engine import Engine
 from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv() 
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'lokalhealth-epidemiological-secret-key-2026'
@@ -89,7 +89,7 @@ def require_password_change_completion():
 
 
 # ==========================================
-# DATABASE SCHEMAS (RA 10173 & RBAC ALIGNED)
+# DATABASE SCHEMAS (With RBAC and Permissions)
 # ==========================================
 
 class User(UserMixin, db.Model):
