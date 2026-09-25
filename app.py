@@ -7,7 +7,11 @@ import sys
 from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+import pandas as pd
+import numpy as np
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error, mean_absolute_error
 from sqlalchemy import event, text, or_
 from sqlalchemy.engine import Engine
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -163,6 +167,41 @@ def ensure_primary_admin_account():
 def load_user(user_id):
     user = db.session.get(User, int(user_id))
     return user if user and not user.is_blocked else None
+
+@app.route('/evaluation', methods=['GET', 'POST'])
+@login_required
+def evaluation():
+    if request.method == 'POST':
+        try:
+            eval_record = SystemEvaluation(
+                evaluator_role=request.form.get('evaluator_role', 'BHW'),
+                task_completion_seconds=float(request.form.get('task_completion_seconds', 0)),
+                sus_score=float(request.form.get('sus_score', 0)),
+                watchlist_agreement=request.form.get('watchlist_agreement', 'Agree'),
+                notes=request.form.get('notes', '')
+            )
+            db.session.add(eval_record)
+            db.session.commit()
+            flash('Evaluation metric recorded successfully.', 'success')
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Error saving evaluation: {str(e)}', 'error')
+        return redirect(url_for('evaluation'))
+
+    evaluations = SystemEvaluation.query.all()
+    avg_sus = round(sum(e.sus_score for e in evaluations) / len(evaluations), 2) if evaluations else 0
+    avg_time = round(sum(e.task_completion_seconds for e in evaluations) / len(evaluations), 2) if evaluations else 0
+    
+    return render_template('evaluation.html', evaluations=evaluations, avg_sus=avg_sus, avg_time=avg_time)
+
+class SystemEvaluation(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    evaluator_role = db.Column(db.String(50), nullable=False) # e.g., 'BHW', 'City Health Officer'
+    task_completion_seconds = db.Column(db.Float, nullable=False)
+    sus_score = db.Column(db.Float, nullable=False) # Standard 0-100 SUS score
+    watchlist_agreement = db.Column(db.String(20), nullable=False) # 'Agree', 'Neutral', 'Disagree'
+    notes = db.Column(db.Text, nullable=True)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
 # ==========================================
 # AUTHENTICATION ROUTES
@@ -421,6 +460,9 @@ def dashboard_forecast_api():
             'current_cases': None,
             'predicted_cases': None,
             'diff': None,
+            'rmse_rf': None,
+            'rmse_naive': None,
+            'mean_error': None,
         })
 
     counts_by_week = {int(week): int(count) for week, count in grouped_counts}
@@ -431,6 +473,9 @@ def dashboard_forecast_api():
             'current_cases': None,
             'predicted_cases': None,
             'diff': None,
+            'rmse_rf': None,
+            'rmse_naive': None,
+            'mean_error': None,
         })
 
     latest_cases = counts_by_week[current_week]
@@ -448,13 +493,43 @@ def dashboard_forecast_api():
             'current_cases': latest_cases,
             'predicted_cases': None,
             'diff': None,
+            'rmse_rf': None,
+            'rmse_naive': None,
+            'mean_error': None,
         })
 
+    # 1. Random Forest Model & In-Sample Metrics: In-sample metrics calculation for performance validation
     model = RandomForestRegressor(n_estimators=100, random_state=42)
-    model.fit(
-        training_data[['lag_1', 'lag_2', 'morbidity_week']],
-        training_data['case_count'],
+    X = training_data[['lag_1', 'lag_2', 'morbidity_week']]
+    y = training_data['case_count']
+    model.fit(X, y)
+    
+    # In-sample metrics calculation for performance validation
+    y_pred_in = model.predict(X)
+    from sklearn.metrics import mean_squared_error
+    rmse_rf = round(float(np.sqrt(mean_squared_error(y, y_pred_in))), 2)
+    mae_rf = round(float(mean_absolute_error(y, y_pred_in)), 2)
+    mean_error = round(float(np.mean(y_pred_in - y)), 2)
+
+    # 2. Naive baseline: forecast equals the previous period's value (lag_1)
+    y_naive = training_data['lag_1']
+    rmse_naive = round(float(np.sqrt(mean_squared_error(y, y_naive))), 2)
+
+    # 3. Linear Regression Baseline 
+    lr_model = LinearRegression()
+    lr_model.fit(X, y)
+    y_pred_lr = lr_model.predict(X)
+    rmse_lr = round(float(np.sqrt(mean_squared_error(y, y_pred_lr))), 2)
+
+    # 4. Historical Seasonal Median Baseline 
+    # Pull historical median for each morbidity week from baseline years
+    historical_medians = trend['median'] # from get_dashboard_trend()
+    y_seasonal_baseline = training_data['morbidity_week'].apply(
+        lambda w: historical_medians[int(w) - 1] if 1 <= int(w) <= len(historical_medians) else y.mean()
     )
+    rmse_seasonal = round(float(np.sqrt(mean_squared_error(y, y_seasonal_baseline))), 2)
+
+    # Forecast next point
     latest_counts = weekly_counts.iloc[-1]
     forecast = model.predict(pd.DataFrame([{
         'lag_1': latest_counts['case_count'],
@@ -469,6 +544,12 @@ def dashboard_forecast_api():
         'current_cases': latest_cases,
         'predicted_cases': predicted_cases,
         'diff': round(predicted_cases - latest_cases, 2),
+        'rmse_rf': rmse_rf,
+        'mae_rf': mae_rf,
+        'rmse_naive': rmse_naive,
+        'rmse_lr': rmse_lr,
+        'rmse_seasonal': rmse_seasonal,
+        'mean_error': mean_error,
     })
 
 
@@ -595,8 +676,6 @@ def dashboard():
     )
 
 # Screen 3: Data Entry, CSV Ingestion, and Offline Sync
-import pandas as pd
-
 
 def normalize_upload_header(value):
     text = str(value).strip().lower()

@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row mb-4">
+    <div class="col-md-12">
+        <h2 class="fw-bold">Operational Evaluation Module</h2>
+        <p class="text-muted">Record System Usability Scale (SUS) scores, task completion times, and expert watchlist agreement for thesis validation.</p>
+    </div>
+</div>
+
+<!-- Summary Statistics Cards -->
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card shadow-sm border-0 bg-white">
+            <div class="card-body">
+                <h6 class="text-muted text-uppercase fw-bold">Average SUS Score</h6>
+                <h2 class="fw-bold text-primary mb-0">{{ avg_sus }} <small class="text-muted fs-6">/ 100</small></h2>
+                <small class="text-muted">Target Benchmark: > 80.0 (Excellent Usability)</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card shadow-sm border-0 bg-white">
+            <div class="card-body">
+                <h6 class="text-muted text-uppercase fw-bold">Avg Task Completion Time</h6>
+                <h2 class="fw-bold text-success mb-0">{{ avg_time }} <small class="text-muted fs-6">seconds</small></h2>
+                <small class="text-muted">Measures BHW template ingestion & risk lookup speed</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Evaluation Input Form -->
+    <div class="col-md-5 mb-4">
+        <div class="card shadow-sm border-0">
+            <div class="card-header bg-white py-3">
+                <h5 class="mb-0 fw-bold">Log Evaluation Metric</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    <div class="mb-3">
+                        <label for="evaluator_role" class="form-label">Evaluator Role</label>
+                        <select class="form-select" id="evaluator_role" name="evaluator_role" required>
+                            <option value="BHW">Barangay Health Worker (BHW)</option>
+                            <option value="City Health Officer">City Health Officer</option>
+                            <option value="Epidemiologist">Epidemiologist</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="task_completion_seconds" class="form-label">Task Completion Time (Seconds)</label>
+                        <input type="number" step="0.1" class="form-control" id="task_completion_seconds" name="task_completion_seconds" required placeholder="e.g., 45.5">
+                    </div>
+                    <div class="mb-3">
+                        <label for="sus_score" class="form-label">System Usability Scale (SUS) Score [0-100]</label>
+                        <input type="number" step="0.1" min="0" max="100" class="form-control" id="sus_score" name="sus_score" required placeholder="e.g., 85.0">
+                    </div>
+                    <div class="mb-3">
+                        <label for="watchlist_agreement" class="form-label">Watchlist Triage Agreement</label>
+                        <select class="form-select" id="watchlist_agreement" name="watchlist_agreement" required>
+                            <option value="Agree">Agree</option>
+                            <option value="Neutral">Neutral</option>
+                            <option value="Disagree">Disagree</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="notes" class="form-label">Qualitative Feedback / Notes</label>
+                        <textarea class="form-control" id="notes" name="notes" rows="2" placeholder="Optional comments from evaluator"></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">Submit Metric</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Evaluation Records Table -->
+    <div class="col-md-7">
+        <div class="card shadow-sm border-0">
+            <div class="card-header bg-white py-3">
+                <h5 class="mb-0 fw-bold">Recorded Evaluation Sessions</h5>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0 align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Role</th>
+                                <th>Time (s)</th>
+                                <th>SUS</th>
+                                <th>Agreement</th>
+                                <th>Timestamp</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for e in evaluations %}
+                            <tr>
+                                <td><span class="badge bg-secondary">{{ e.evaluator_role }}</span></td>
+                                <td>{{ e.task_completion_seconds }}s</td>
+                                <td><strong>{{ e.sus_score }}</strong></td>
+                                <td>
+                                    <span class="badge bg-{{ 'success' if e.watchlist_agreement == 'Agree' else ('warning' if e.watchlist_agreement == 'Neutral' else 'danger') }}">
+                                        {{ e.watchlist_agreement }}
+                                    </span>
+                                </td>
+                                <td><small class="text-muted">{{ e.timestamp.strftime('%Y-%m-%d %H:%M') }}</small></td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="5" class="text-center py-4 text-muted">No evaluation records logged yet.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
