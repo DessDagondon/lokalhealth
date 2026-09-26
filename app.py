@@ -162,7 +162,6 @@ def ensure_primary_admin_account():
         db.session.rollback()
         return False
 
-
 @login_manager.user_loader
 def load_user(user_id):
     user = db.session.get(User, int(user_id))
@@ -173,16 +172,27 @@ def load_user(user_id):
 def evaluation():
     if request.method == 'POST':
         try:
+            # Extract the 10 standard SUS Likert responses (1 to 5)
+            sus_responses = [int(request.form.get(f'q{i}', 3)) for i in range(1, 11)]
+            
+            # Calculate official standard SUS score (0-100)
+            # Odd items (indices 0, 2, 4, 6, 8 for Q1, 3, 5, 7, 9): score = response - 1
+            odd_sum = sum(r - 1 for i, r in enumerate(sus_responses) if i % 2 == 0)
+            # Even items (indices 1, 3, 5, 7, 9 for Q2, 4, 6, 8, 10): score = 5 - response
+            even_sum = sum(5 - r for i, r in enumerate(sus_responses) if i % 2 != 0)
+            
+            calculated_sus = (odd_sum + even_sum) * 2.5
+
             eval_record = SystemEvaluation(
                 evaluator_role=request.form.get('evaluator_role', 'BHW'),
                 task_completion_seconds=float(request.form.get('task_completion_seconds', 0)),
-                sus_score=float(request.form.get('sus_score', 0)),
+                sus_score=float(calculated_sus), # Automatically computed true SUS score
                 watchlist_agreement=request.form.get('watchlist_agreement', 'Agree'),
                 notes=request.form.get('notes', '')
             )
             db.session.add(eval_record)
             db.session.commit()
-            flash('Evaluation metric recorded successfully.', 'success')
+            flash('True SUS evaluation metric recorded successfully.', 'success')
         except Exception as e:
             db.session.rollback()
             flash(f'Error saving evaluation: {str(e)}', 'error')

@@ -20,7 +20,7 @@
                 <a class="nav-link" href="{{ url_for('records') }}">Records</a>
                 <a class="nav-link" href="{{ url_for('repository') }}">Repository</a>
                 <a class="nav-link" href="{{ url_for('reports') }}">Reports</a>
-                <a class="nav-link active" href="{{ url_for('evaluation') }}">Evaluation</a>
+                <a class="nav-link" href="{{ url_for('evaluation') }}">Evaluation</a>
                 {% if current_user.role == 'Admin' %}
                 <a class="nav-link" href="{{ url_for('admin') }}">Admin</a>
                 {% endif %}

@@ -1,9 +1,15 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="row mb-4">
-    <div class="col-md-12">
-        <h2 class="fw-bold">Operational Evaluation Module</h2>
-        <p class="text-muted">Record System Usability Scale (SUS) scores, task completion times, and expert watchlist agreement for thesis validation.</p>
+    <div class="col-md-12 d-flex justify-content-between align-items-center">
+        <div>
+            <h2 class="fw-bold">Operational Evaluation Module</h2>
+            <p class="text-muted mb-0">Record System Usability Scale (SUS) scores, task completion times, and expert watchlist agreement for thesis validation.</p>
+        </div>
+        <!-- Trigger Modal Button -->
+        <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#evaluationModal">
+            <i class="bi bi-plus-circle me-1"></i> Log New Evaluation
+        </button>
     </div>
 </div>
 
@@ -29,51 +35,9 @@
     </div>
 </div>
 
+<!-- Evaluation Records Table -->
 <div class="row">
-    <!-- Evaluation Input Form -->
-    <div class="col-md-5 mb-4">
-        <div class="card shadow-sm border-0">
-            <div class="card-header bg-white py-3">
-                <h5 class="mb-0 fw-bold">Log Evaluation Metric</h5>
-            </div>
-            <div class="card-body">
-                <form method="POST">
-                    <div class="mb-3">
-                        <label for="evaluator_role" class="form-label">Evaluator Role</label>
-                        <select class="form-select" id="evaluator_role" name="evaluator_role" required>
-                            <option value="BHW">Barangay Health Worker (BHW)</option>
-                            <option value="City Health Officer">City Health Officer</option>
-                            <option value="Epidemiologist">Epidemiologist</option>
-                        </select>
-                    </div>
-                    <div class="mb-3">
-                        <label for="task_completion_seconds" class="form-label">Task Completion Time (Seconds)</label>
-                        <input type="number" step="0.1" class="form-control" id="task_completion_seconds" name="task_completion_seconds" required placeholder="e.g., 45.5">
-                    </div>
-                    <div class="mb-3">
-                        <label for="sus_score" class="form-label">System Usability Scale (SUS) Score [0-100]</label>
-                        <input type="number" step="0.1" min="0" max="100" class="form-control" id="sus_score" name="sus_score" required placeholder="e.g., 85.0">
-                    </div>
-                    <div class="mb-3">
-                        <label for="watchlist_agreement" class="form-label">Watchlist Triage Agreement</label>
-                        <select class="form-select" id="watchlist_agreement" name="watchlist_agreement" required>
-                            <option value="Agree">Agree</option>
-                            <option value="Neutral">Neutral</option>
-                            <option value="Disagree">Disagree</option>
-                        </select>
-                    </div>
-                    <div class="mb-3">
-                        <label for="notes" class="form-label">Qualitative Feedback / Notes</label>
-                        <textarea class="form-control" id="notes" name="notes" rows="2" placeholder="Optional comments from evaluator"></textarea>
-                    </div>
-                    <button type="submit" class="btn btn-primary w-100">Submit Metric</button>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <!-- Evaluation Records Table -->
-    <div class="col-md-7">
+    <div class="col-md-12">
         <div class="card shadow-sm border-0">
             <div class="card-header bg-white py-3">
                 <h5 class="mb-0 fw-bold">Recorded Evaluation Sessions</h5>
@@ -85,8 +49,9 @@
                             <tr>
                                 <th>Role</th>
                                 <th>Time (s)</th>
-                                <th>SUS</th>
+                                <th>SUS Score</th>
                                 <th>Agreement</th>
+                                <th>Notes</th>
                                 <th>Timestamp</th>
                             </tr>
                         </thead>
@@ -101,11 +66,12 @@
                                         {{ e.watchlist_agreement }}
                                     </span>
                                 </td>
+                                <td><small class="text-muted">{{ e.notes if e.notes else 'None' }}</small></td>
                                 <td><small class="text-muted">{{ e.timestamp.strftime('%Y-%m-%d %H:%M') }}</small></td>
                             </tr>
                             {% else %}
                             <tr>
-                                <td colspan="5" class="text-center py-4 text-muted">No evaluation records logged yet.</td>
+                                <td colspan="6" class="text-center py-4 text-muted">No evaluation records logged yet. Click "Log New Evaluation" above.</td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -115,4 +81,178 @@
         </div>
     </div>
 </div>
+
+<!-- Multi-Step Pagination Modal -->
+<div class="modal fade" id="evaluationModal" tabindex="-1" aria-labelledby="evaluationModalLabel" aria-hidden="true" data-bs-backdrop="static">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content" style="max-height: 90vh;">
+            <div class="modal-header bg-light">
+                <h5 class="modal-title fw-bold" id="evaluationModalLabel">Log Evaluation Metric (Step <span id="currentStepNum">1</span> of 3)</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="POST" id="evalForm">
+                <div class="modal-body overflow-auto" style="max-height: calc(90vh - 130px);">
+                    
+                    <!-- STEP 1: Role & Completion Time -->
+                    <div class="eval-step" id="step-1">
+                        <h6 class="fw-bold text-primary mb-3">Step 1: Session Metadata & Task Time</h6>
+                        <div class="mb-3">
+                            <label for="evaluator_role" class="form-label">Evaluator Role</label>
+                            <select class="form-select" id="evaluator_role" name="evaluator_role" required>
+                                <option value="BHW">Barangay Health Worker (BHW)</option>
+                                <option value="City Health Officer">City Health Officer</option>
+                                <option value="Epidemiologist">Epidemiologist</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="task_completion_seconds" class="form-label">Task Completion Time (Seconds)</label>
+                            <input type="number" step="0.1" class="form-control" id="task_completion_seconds" name="task_completion_seconds" required placeholder="e.g., 45.5">
+                        </div>
+                    </div>
+
+                    <!-- STEP 2: SUS Questions 1 to 5 -->
+                    <div class="eval-step d-none" id="step-2">
+                        <h6 class="fw-bold text-primary mb-2">Step 2: System Usability Scale (SUS) [1/2]</h6>
+                        <p class="text-muted small">Rate each statement from 1 (Strongly Disagree) to 5 (Strongly Agree):</p>
+
+                        {% set sus_questions_part1 = [
+                            "1. I think that I would like to use this system frequently.",
+                            "2. I found the system unnecessarily complex.",
+                            "3. I thought the system was easy to use.",
+                            "4. I found that I would need the support of a technical person to be able to use this system.",
+                            "5. I found the various functions in this system were well integrated."
+                        ] %}
+
+                        {% for i in range(1, 6) %}
+                        <div class="mb-3 p-3 bg-light rounded border-0">
+                            <label class="form-label fw-semibold text-dark small d-block mb-2">{{ sus_questions_part1[i-1] }}</label>
+                            <div class="d-flex justify-content-around px-1">
+                                {% for val in range(1, 6) %}
+                                <div class="form-check form-check-inline m-0">
+                                    <input class="form-check-input" type="radio" name="q{{ i }}" id="q{{ i }}_{{ val }}" value="{{ val }}" {% if val == 3 %}checked{% endif %} required>
+                                    <label class="form-check-label small ms-1" for="q{{ i }}_{{ val }}">{{ val }}</label>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            <div class="d-flex justify-content-between text-muted mt-1 px-1" style="font-size: 0.7rem;">
+                                <span>1: Strongly Disagree</span>
+                                <span>5: Strongly Agree</span>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+
+                    <!-- STEP 3: SUS Questions 6 to 10 & Triage -->
+                    <div class="eval-step d-none" id="step-3">
+                        <h6 class="fw-bold text-primary mb-2">Step 3: System Usability Scale (SUS) [2/2] & Triage</h6>
+                        <p class="text-muted small">Rate remaining statements, then provide final feedback:</p>
+
+                        {% set sus_questions_part2 = [
+                            "6. I thought there was too much inconsistency in this system.",
+                            "7. I would imagine that most people would learn to use this system very quickly.",
+                            "8. I found the system very cumbersome to use.",
+                            "9. I felt very confident using the system.",
+                            "10. I needed to learn a lot of things before I could get going with this system."
+                        ] %}
+
+                        {% for i in range(6, 11) %}
+                        <div class="mb-3 p-3 bg-light rounded border-0">
+                            <label class="form-label fw-semibold text-dark small d-block mb-2">{{ sus_questions_part2[i-6] }}</label>
+                            <div class="d-flex justify-content-around px-1">
+                                {% for val in range(1, 6) %}
+                                <div class="form-check form-check-inline m-0">
+                                    <input class="form-check-input" type="radio" name="q{{ i }}" id="q{{ i }}_{{ val }}" value="{{ val }}" {% if val == 3 %}checked{% endif %} required>
+                                    <label class="form-check-label small ms-1" for="q{{ i }}_{{ val }}">{{ val }}</label>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            <div class="d-flex justify-content-between text-muted mt-1 px-1" style="font-size: 0.7rem;">
+                                <span>1: Strongly Disagree</span>
+                                <span>5: Strongly Agree</span>
+                            </div>
+                        </div>
+                        {% endfor %}
+
+                        <hr class="my-3">
+                        <div class="mb-3">
+                            <label for="watchlist_agreement" class="form-label">Watchlist Triage Agreement</label>
+                            <select class="form-select" id="watchlist_agreement" name="watchlist_agreement" required>
+                                <option value="Agree">Agree</option>
+                                <option value="Neutral">Neutral</option>
+                                <option value="Disagree">Disagree</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="notes" class="form-label">Qualitative Feedback / Notes</label>
+                            <textarea class="form-control" id="notes" name="notes" rows="2" placeholder="Optional comments from evaluator"></textarea>
+                        </div>
+                    </div>
+
+                </div>
+                <div class="modal-footer bg-light">
+                    <button type="button" class="btn btn-outline-secondary" id="prevBtn" onclick="nextPrev(-1)" style="display:none;">Previous</button>
+                    <button type="button" class="btn btn-primary" id="nextBtn" onclick="nextPrev(1)">Next Step</button>
+                    <button type="submit" class="btn btn-success fw-bold px-4" id="submitBtn" style="display:none;"><i class="bi bi-check-circle me-1"></i> Confirm & Save Evaluation</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Wizard Navigation Script -->
+<script>
+    let currentTab = 0;
+    showTab(currentTab);
+
+    function showTab(n) {
+        let steps = document.getElementsByClassName("eval-step");
+        for (let i = 0; i < steps.length; i++) {
+            steps[i].classList.add("d-none");
+        }
+        steps[n].classList.remove("d-none");
+        document.getElementById("currentStepNum").innerText = n + 1;
+
+        let prevBtn = document.getElementById("prevBtn");
+        let nextBtn = document.getElementById("nextBtn");
+        let submitBtn = document.getElementById("submitBtn");
+
+        if (n === 0) {
+            prevBtn.style.display = "none";
+        } else {
+            prevBtn.style.display = "inline-block";
+        }
+
+        if (n === (steps.length - 1)) {
+            nextBtn.style.display = "none";
+            submitBtn.style.display = "inline-block";
+        } else {
+            nextBtn.style.display = "inline-block";
+            submitBtn.style.display = "none";
+        }
+    }
+
+    function nextPrev(n) {
+        let steps = document.getElementsByClassName("eval-step");
+        
+        if (n == 1 && !validateFormStep(currentTab)) return false;
+
+        currentTab = currentTab + n;
+        if (currentTab >= steps.length) {
+            return false;
+        }
+        showTab(currentTab);
+    }
+
+    function validateFormStep(tabIndex) {
+        let steps = document.getElementsByClassName("eval-step");
+        let inputs = steps[tabIndex].querySelectorAll("input, select, textarea");
+        for (let i = 0; i < inputs.length; i++) {
+            if (inputs[i].hasAttribute("required") && !inputs[i].value) {
+                inputs[i].reportValidity();
+                return false;
+            }
+        }
+        return true;
+    }
+</script>
 {% endblock %}
