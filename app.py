@@ -12,6 +12,7 @@ import numpy as np
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, mean_absolute_error
+from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
 from sqlalchemy import event, text, or_
 from sqlalchemy.engine import Engine
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -508,22 +509,56 @@ def dashboard_forecast_api():
             'mean_error': None,
         })
 
-    # 1. Random Forest Model & In-Sample Metrics: In-sample metrics calculation for performance validation
-    model = RandomForestRegressor(n_estimators=100, random_state=42)
-    X = training_data[['lag_1', 'lag_2', 'morbidity_week']]
-    y = training_data['case_count']
-    model.fit(X, y)
-    
+    # 1. Prepare Features & Target
+    X = training_data[['lag_1', 'lag_2', 'morbidity_week']].dropna()
+    y = training_data.loc[X.index, 'case_count']
+
+    # Hyperparameter Grid Configuration
+    param_grid = {
+        'n_estimators': [50, 100, 200],
+        'max_depth': [None, 10, 20, 30]
+    }
+
+    # Walk-Forward Validation Strategy using TimeSeriesSplit
+    n_splits = min(3, len(training_data) - 1)
+    if n_splits < 2:
+        # Fallback for small sample sizes
+        model = RandomForestRegressor(
+            criterion='squared_error',
+            n_estimators=100,
+            min_samples_split=2,
+            min_samples_leaf=1,
+            random_state=42
+        )
+        model.fit(X, y)
+    else:
+        tscv = TimeSeriesSplit(n_splits=n_splits)
+        rf = RandomForestRegressor(
+            criterion='squared_error',
+            min_samples_split=2,
+            min_samples_leaf=1,
+            random_state=42
+        )
+        grid_search = GridSearchCV(
+            estimator=rf,
+            param_grid=param_grid,
+            cv=tscv,
+            scoring='neg_mean_squared_error',
+            n_jobs=-1
+        )
+        grid_search.fit(X, y)
+        model = grid_search.best_estimator_
+
     # In-sample metrics calculation for performance validation
     y_pred_in = model.predict(X)
-    from sklearn.metrics import mean_squared_error
     rmse_rf = round(float(np.sqrt(mean_squared_error(y, y_pred_in))), 2)
     mae_rf = round(float(mean_absolute_error(y, y_pred_in)), 2)
     mean_error = round(float(np.mean(y_pred_in - y)), 2)
-
+    
     # 2. Naive baseline: forecast equals the previous period's value (lag_1)
-    y_naive = training_data['lag_1']
-    rmse_naive = round(float(np.sqrt(mean_squared_error(y, y_naive))), 2)
+    y_naive = X['lag_1']
+    y_actual_naive = y.loc[y_naive.index]
+    rmse_naive = round(float(np.sqrt(mean_squared_error(y_actual_naive, y_naive))), 2)
 
     # 3. Linear Regression Baseline 
     lr_model = LinearRegression()
@@ -532,10 +567,10 @@ def dashboard_forecast_api():
     rmse_lr = round(float(np.sqrt(mean_squared_error(y, y_pred_lr))), 2)
 
     # 4. Historical Seasonal Median Baseline 
-    # Pull historical median for each morbidity week from baseline years
     historical_medians = trend['median'] # from get_dashboard_trend()
-    y_seasonal_baseline = training_data['morbidity_week'].apply(
-        lambda w: historical_medians[int(w) - 1] if 1 <= int(w) <= len(historical_medians) else y.mean()
+    y_seasonal_baseline = X['morbidity_week'].apply(
+        lambda w: historical_medians.iloc[int(w) - 1] if hasattr(historical_medians, 'iloc') and 1 <= int(w) <= len(historical_medians) 
+        else (historical_medians[int(w) - 1] if 1 <= int(w) <= len(historical_medians) else y.mean())
     )
     rmse_seasonal = round(float(np.sqrt(mean_squared_error(y, y_seasonal_baseline))), 2)
 
@@ -561,7 +596,6 @@ def dashboard_forecast_api():
         'rmse_seasonal': rmse_seasonal,
         'mean_error': mean_error,
     })
-
 
 @app.route('/dashboard')
 @login_required
@@ -1108,6 +1142,11 @@ def records():
     page = max(page, 1)
 
     if request.method == 'POST':
+        # Enforce RBAC permission for data creation / uploads
+        if not current_user.can_create and current_user.role != 'Admin':
+            flash('Access denied: Your account does not have permission to add or upload records.', 'error')
+            return redirect(url_for('records'))
+
         if request.form.get('manual_entry'):
             try:
                 case_id = request.form.get('case_id', '').strip()
