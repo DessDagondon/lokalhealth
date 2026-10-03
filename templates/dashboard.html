@@ -33,14 +33,14 @@
         <div class="alert-right-content text-end">
             <strong class="small d-block">{{ trend.recommendation }}</strong>
             <div id="dashboard-forecast" class="border rounded bg-white text-dark p-2 mt-2 small" data-year="{{ selected_year }}">
-                <span class="text-muted d-block">Next Week Case Projection</span>
+                <label for="forecast-horizon" class="text-muted d-block">Forecast horizon</label>
+                <select id="forecast-horizon" class="form-select form-select-sm my-1" aria-label="Forecast horizon">
+                    <option value="1">1-Week Ahead</option>
+                    <option value="4">Multi-Week Projection</option>
+                </select>
                 <strong id="forecast-value">Loading...</strong>
                 <span id="forecast-direction" class="badge d-none mt-1" aria-live="polite"></span>
-                <div id="model-metrics" class="text-muted mt-1 pt-1 border-top" style="font-size: 0.75rem; display: none;">
-                    <div>RF RMSE: <span id="metric-rmse-rf">-</span> | RF MAE: <span id="metric-mae-rf">-</span></div>
-                    <div>Naive RMSE: <span id="metric-rmse-naive">-</span> | Linear Reg RMSE: <span id="metric-rmse-lr">-</span></div>
-                    <div>Seasonal Median: <span id="metric-rmse-seasonal">-</span> | Mean Error: <span id="metric-mean-error">-</span></div>
-                </div>
+                <button type="button" class="btn btn-link btn-sm p-0 mt-1" data-bs-toggle="modal" data-bs-target="#modelPerformanceModal">Model performance</button>
             </div>
         </div>
     </div>
@@ -66,31 +66,101 @@
 <!-- Key Metrics Cards -->
 <div class="row g-3 mb-4">
     <div class="col-md-3">
-        <div class="card border-0 shadow-sm p-3">
-            <span class="text-muted small fw-bold">TOTAL CONFIRMED CASES</span>
-            <h2 class="fw-bold text-dark my-1">{{ confirmed_cases }}</h2>
-            <span class="text-muted small">Records marked confirmed</span>
+        <div class="card border-0 shadow-sm p-3 h-100">
+            <div class="d-flex justify-content-between align-items-center gap-2">
+                <span class="text-muted small fw-bold">CASE METRICS</span>
+            </div>
+            <div class="btn-group btn-group-sm mt-2 w-100" role="group" aria-label="Case metrics view">
+                <button type="button" class="btn btn-primary case-view-button flex-fill" data-view="total" aria-pressed="true">Total Cases</button>
+                <button type="button" class="btn btn-outline-primary case-view-button flex-fill" data-view="breakdown" aria-pressed="false">Clinical Breakdown</button>
+            </div>
+            <div id="case-total-panel" class="pt-2">
+                <h2 class="fw-bold text-dark my-1">{{ total_cases }}</h2>
+                <span class="text-muted small">All surveillance records</span>
+                <span class="text-muted small d-block">TOTAL CONFIRMED CASES: {{ confirmed_cases }}</span>
+            </div>
+            <div id="case-breakdown-panel" class="pt-2" hidden>
+                {% set case_breakdown_total = case_breakdown.values()|sum %}
+                {% set clinical_breakdown_total = clinical_breakdown.values()|sum %}
+                <div class="small fw-semibold mb-1">Clinical classification</div>
+                <div class="progress dashboard-segment-bar mb-1" role="img" aria-label="Clinical classification breakdown">
+                    {% for label, color in [('Severe', 'danger'), ('Non-severe', 'success'), ('Unavailable', 'secondary')] %}
+                    {% set count = clinical_breakdown[label] %}
+                    {% if count > 0 %}
+                    <div class="progress-bar bg-{{ color }}" style="width: {{ (count / clinical_breakdown_total * 100) if clinical_breakdown_total else 0 }}%" title="{{ label }}: {{ count }}"></div>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+                <div class="small text-muted mb-2">Severe {{ clinical_breakdown['Severe'] }} &middot; Non-severe {{ clinical_breakdown['Non-severe'] }}</div>
+                <div class="small fw-semibold mb-1">Case classification</div>
+                <div class="progress dashboard-segment-bar mb-1" role="img" aria-label="Case classification breakdown">
+                    {% for label, color in [('Confirmed', 'primary'), ('Suspected', 'warning'), ('Other / unavailable', 'secondary')] %}
+                    {% set count = case_breakdown[label] %}
+                    {% if count > 0 %}
+                    <div class="progress-bar bg-{{ color }}" style="width: {{ (count / case_breakdown_total * 100) if case_breakdown_total else 0 }}%" title="{{ label }}: {{ count }}"></div>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+                <div class="small text-muted">Confirmed {{ case_breakdown['Confirmed'] }} &middot; Suspected {{ case_breakdown['Suspected'] }}</div>
+            </div>
         </div>
     </div>
     <div class="col-md-3">
-        <div class="card border-0 shadow-sm p-3">
+        <div class="card border-0 shadow-sm p-3 h-100">
             <span class="text-muted small fw-bold">ACTIVE CLUSTERS</span>
             <h2 class="fw-bold text-warning my-1">{{ total_clusters if total_clusters is defined else all_clusters|length }}</h2>
             <span class="text-muted small">Barangays represented in records</span>
         </div>
     </div>
-    <div class="col-md-3">
-        <div class="card border-0 shadow-sm p-3">
-            <span class="text-muted small fw-bold">AGE DISTRIBUTION</span>
-            <h2 class="fw-bold text-primary my-1">{{ age_distribution.values()|sum }}</h2>
-            <span class="text-muted small">Breakdown: {{ age_distribution['0-17'] }} pediatric (0-17), {{ age_distribution['18-34'] }} young adults (18-34), {{ age_distribution['35-54'] }} adults (35-54), and {{ age_distribution['55+'] }} seniors (55+).</span>
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm p-3 h-100">
+            <div class="d-flex justify-content-between align-items-baseline">
+                <span class="text-muted small fw-bold">DEMOGRAPHICS</span>
+                <span class="small text-muted">{{ confirmed_cases }} confirmed cases</span>
+            </div>
+            {% set age_total = age_distribution.values()|sum %}
+            {% set sex_known_total = sex_distribution['Male'] + sex_distribution['Female'] %}
+            <div class="row g-3 mt-1">
+                <div class="col-7">
+                    <div class="small fw-semibold mb-1">Age distribution</div>
+                    <div class="progress dashboard-segment-bar mb-2" role="img" aria-label="Age distribution">
+                        {% for label, color in [('0-17', 'info'), ('18-34', 'primary'), ('35-54', 'success'), ('55+', 'warning'), ('Unavailable', 'secondary')] %}
+                        {% set count = age_distribution.get(label, 0) %}
+                        {% if count > 0 %}
+                        <div class="progress-bar bg-{{ color }}" style="width: {{ (count / age_total * 100) if age_total else 0 }}%" title="{{ label }}: {{ count }}"></div>
+                        {% endif %}
+                        {% endfor %}
+                    </div>
+                    <div class="d-flex flex-wrap gap-1">
+                        <span class="badge text-bg-info">0-17: {{ age_distribution['0-17'] }}</span>
+                        <span class="badge text-bg-primary">18-34: {{ age_distribution['18-34'] }}</span>
+                        <span class="badge text-bg-success">35-54: {{ age_distribution['35-54'] }}</span>
+                        <span class="badge text-bg-warning">55+: {{ age_distribution['55+'] }}</span>
+                    </div>
+                    <span class="visually-hidden">Breakdown: {{ age_distribution['0-17'] }} pediatric (0-17), {{ age_distribution['18-34'] }} young adults (18-34), {{ age_distribution['35-54'] }} adults (35-54), and {{ age_distribution['55+'] }} seniors (55+).</span>
+                </div>
+                <div class="col-5">
+                    <div class="small fw-semibold mb-1">Sex</div>
+                    <div class="progress dashboard-segment-bar mb-2" role="img" aria-label="Male and female confirmed case distribution">
+                        <div class="progress-bar bg-primary" style="width: {{ (sex_distribution['Male'] / sex_known_total * 100) if sex_known_total else 0 }}%"></div>
+                        <div class="progress-bar bg-danger" style="width: {{ (sex_distribution['Female'] / sex_known_total * 100) if sex_known_total else 0 }}%"></div>
+                    </div>
+                    <div class="d-flex flex-column gap-1 small">
+                        <span class="badge text-bg-primary text-start">Male {{ sex_distribution['Male'] }}</span>
+                        <span class="badge text-bg-danger text-start">Female {{ sex_distribution['Female'] }}</span>
+                        {% if sex_distribution['Other / unavailable'] %}
+                        <span class="text-muted">Other / unavailable {{ sex_distribution['Other / unavailable'] }}</span>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
-    <div class="col-md-3">
-        <div class="card border-0 shadow-sm p-3">
+    <div class="col-md-2">
+        <div class="card border-0 shadow-sm p-3 h-100">
             <span class="text-muted small fw-bold">PENDING LOCAL SYNC</span>
             <h2 class="fw-bold text-success my-1">0</h2>
-                <span class="text-muted small">No unsynced records tracked</span>
+            <span class="text-muted small">No unsynced records tracked</span>
         </div>
     </div>
 </div>
@@ -106,6 +176,7 @@
                     <button type="button" class="btn btn-outline-primary trend-period-button" data-period="monthly" aria-pressed="false">Monthly</button>
                 </div>
             </div>
+            <div id="forecast-interval-note" class="small text-muted mt-2" hidden>Shaded band shows an estimated 95% uncertainty interval.</div>
             <div class="bg-light rounded" style="height: 300px;">
                 <canvas id="morbidityWeekChart" data-morbidity-week-trends='{{ morbidity_week_trends | tojson }}' data-trend='{{ trend | tojson }}'></canvas>
             </div>
@@ -164,6 +235,33 @@
         </div>
     </div>
 </div>
+<div class="modal fade" id="modelPerformanceModal" tabindex="-1" aria-labelledby="modelPerformanceModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow">
+            <div class="modal-header">
+                <div>
+                    <h5 class="modal-title fw-bold" id="modelPerformanceModalLabel">Model performance</h5>
+                    <div class="small text-muted">In-sample fit metrics &middot; lower RMSE and MAE indicate closer fit</div>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle mb-2">
+                        <thead><tr><th scope="col">Model</th><th scope="col" class="text-end">RMSE</th><th scope="col" class="text-end">MAE</th></tr></thead>
+                        <tbody>
+                            <tr><th scope="row">Random Forest</th><td id="metric-rmse-rf" class="text-end">—</td><td id="metric-mae-rf" class="text-end">—</td></tr>
+                            <tr><th scope="row">Naive</th><td id="metric-rmse-naive" class="text-end">—</td><td id="metric-mae-naive" class="text-end">—</td></tr>
+                            <tr><th scope="row">Linear Regression</th><td id="metric-rmse-lr" class="text-end">—</td><td id="metric-mae-lr" class="text-end">—</td></tr>
+                            <tr><th scope="row">Seasonal Median</th><td id="metric-rmse-seasonal" class="text-end">—</td><td id="metric-mae-seasonal" class="text-end">—</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="small text-muted">Random Forest mean error: <span id="metric-mean-error">—</span> cases</div>
+            </div>
+        </div>
+    </div>
+</div>
 <style>
     .dashboard-pagination {
         max-width: 100%;
@@ -199,9 +297,39 @@
         padding: 2px 8px;
         border-radius: 0.375rem;
     }
+
+    .dashboard-segment-bar {
+        height: 0.55rem;
+        border-radius: 999px;
+    }
+
+    .alert-banner-content .small,
+    .card .small,
+    .card small,
+    .modal .small,
+    .list-group-item small,
+    .alert > div > small {
+        font-size: 0.9rem;
+        line-height: 1.4;
+    }
+
+    .card .badge,
+    .alert .badge {
+        font-size: 0.8rem;
+        line-height: 1.25;
+    }
+
+    .case-view-button,
+    #surveillance-year,
+    #forecast-horizon,
+    #dashboard-forecast .btn {
+        font-size: 0.9rem;
+    }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
+    Chart.defaults.font.size = 13;
+
     const ctx = document.getElementById('morbidityWeekChart');
     const morbidity_week_trends = ctx ? JSON.parse(ctx.dataset.morbidityWeekTrends) : [];
     const trend = ctx ? JSON.parse(ctx.dataset.trend) : { baseline_75th: [], median: [] };
@@ -213,8 +341,11 @@
     const forecastCard = document.getElementById('dashboard-forecast');
     const forecastValue = document.getElementById('forecast-value');
     const forecastDirection = document.getElementById('forecast-direction');
+    const forecastHorizon = document.getElementById('forecast-horizon');
     const actionRequired = document.getElementById('dashboard-action-required');
     const baseActionRequired = actionRequired ? actionRequired.textContent : '';
+    let activePeriod = 'weekly';
+    let forecastRequestId = 0;
 
     if (ctx) {
         const chart = new Chart(ctx, {
@@ -251,6 +382,22 @@
                     pointStyle: 'circle',
                     spanGaps: true,
                     hidden: true
+                }, {
+                    label: 'Projection interval lower bound',
+                    data: weeklyLabels.map(() => null),
+                    borderColor: 'transparent',
+                    backgroundColor: 'transparent',
+                    fill: false,
+                    pointRadius: 0,
+                    hidden: true
+                }, {
+                    label: 'Estimated 95% interval',
+                    data: weeklyLabels.map(() => null),
+                    borderColor: 'transparent',
+                    backgroundColor: 'rgba(25,135,84,0.14)',
+                    fill: '-1',
+                    pointRadius: 0,
+                    hidden: true
                 }]
             },
             options: {
@@ -277,7 +424,7 @@
                             label: context => {
                                 const label = context.dataset.label || '';
                                 const value = context.raw;
-                                if (label === 'Next Week Projection' && typeof value === 'number') {
+                                if (label.indexOf('Projection') !== -1 && typeof value === 'number') {
                                     return `${label}: ${Math.round(value)}`;
                                 }
                                 return `${label}: ${context.formattedValue}`;
@@ -289,24 +436,52 @@
         });
 
         const forecastDataset = chart.data.datasets[2];
-        const weeklyForecastData = (forecastWeek, predictedCases) => {
-            const forecastIndex = forecastWeek - 1;
-            if (forecastIndex < 0 || forecastIndex >= weeklyLabels.length) {
-                return null;
+        const intervalLowerDataset = chart.data.datasets[3];
+        const intervalUpperDataset = chart.data.datasets[4];
+        const weeklyForecastData = (forecasts, currentWeek, currentCases, property) => {
+            const maxForecastWeek = Math.max(currentWeek, ...forecasts.map(item => Number(item.week)));
+            while (weeklyLabels.length < maxForecastWeek) {
+                const week = weeklyLabels.length + 1;
+                weeklyLabels.push(`MW ${week}`);
+                weeklyValues.push(null);
+                trend.baseline_75th.push(null);
+                if (activePeriod === 'weekly') {
+                    chart.data.labels.push(`MW ${week}`);
+                }
+                chart.data.datasets.forEach(dataset => dataset.data.push(null));
             }
             const data = weeklyLabels.map(() => null);
-            data[Math.max(0, forecastIndex - 1)] = weeklyValues[Math.max(0, forecastIndex - 1)];
-            data[forecastIndex] = predictedCases;
+            const currentIndex = currentWeek - 1;
+            if (currentIndex >= 0 && currentIndex < data.length) {
+                data[currentIndex] = currentCases;
+            }
+            forecasts.forEach(item => {
+                const weekIndex = Number(item.week) - 1;
+                if (weekIndex >= 0 && weekIndex < data.length) {
+                    data[weekIndex] = Number(item[property]);
+                }
+            });
             return data;
         };
 
-        const loadForecast = () => {
+        const setMetric = (id, value) => {
+            const element = document.getElementById(id);
+            if (element) {
+                element.textContent = value === null || value === undefined ? '—' : value;
+            }
+        };
+
+        const loadForecast = (horizon = 1) => {
             if (!forecastCard || !forecastValue || !forecastDirection || !actionRequired) {
                 return;
             }
-            fetch(`/api/dashboard/forecast?year=${encodeURIComponent(forecastCard.dataset.year)}&week=${encodeURIComponent(trend.current_week)}`)
+            const requestId = ++forecastRequestId;
+            fetch(`/api/dashboard/forecast?year=${encodeURIComponent(forecastCard.dataset.year)}&week=${encodeURIComponent(trend.current_week)}&horizon=${encodeURIComponent(horizon)}`)
                 .then(response => response.ok ? response.json() : Promise.reject(new Error('Forecast unavailable')))
                 .then(forecast => {
+                    if (requestId !== forecastRequestId) {
+                        return;
+                    }
                     const hasPrediction = forecast.predicted_cases !== null
                         && forecast.predicted_cases !== undefined
                         && forecast.predicted_cases !== '';
@@ -327,6 +502,9 @@
                         return;
                     }
 
+                    const forecasts = Array.isArray(forecast.forecasts) && forecast.forecasts.length
+                        ? forecast.forecasts
+                        : [{ week: targetWeek, predicted_cases: predictedCases, lower_bound: predictedCases, upper_bound: predictedCases }];
                     const currentCases = Math.round(Number(forecast.current_cases));
                     const difference = Math.round(displayForecastCases - currentCases);
                     const displayDifference = Math.abs(difference);
@@ -347,57 +525,74 @@
                         trajectoryNote = 'Forward projection indicates stable case activity.';
                     }
 
-                    forecastValue.textContent = `MW ${targetWeek}: ${displayForecastCases} cases`;
+                    if (forecasts.length > 1) {
+                        const lastForecast = forecasts[forecasts.length - 1];
+                        forecastValue.textContent = `MW ${targetWeek}–${lastForecast.week}: ${displayForecastCases} to ${Math.round(Number(lastForecast.predicted_cases))} cases`;
+                    } else {
+                        forecastValue.textContent = `MW ${targetWeek}: ${displayForecastCases} cases`;
+                    }
                     forecastDirection.textContent = directionLabel;
                     forecastDirection.className = `badge ${directionClass} mt-1`;
 
-                    if (forecast.rmse_rf !== null) {
-                        document.getElementById('metric-rmse-rf').textContent = forecast.rmse_rf;
-                        document.getElementById('metric-mae-rf').textContent = forecast.mae_rf;
-                        document.getElementById('metric-rmse-naive').textContent = forecast.rmse_naive;
-                        document.getElementById('metric-rmse-lr').textContent = forecast.rmse_lr;
-                        document.getElementById('metric-rmse-seasonal').textContent = forecast.rmse_seasonal;
-                        document.getElementById('metric-mean-error').textContent = forecast.mean_error;
-                        document.getElementById('model-metrics').style.display = 'block';
-                    }
+                    setMetric('metric-rmse-rf', forecast.rmse_rf);
+                    setMetric('metric-mae-rf', forecast.mae_rf);
+                    setMetric('metric-rmse-naive', forecast.rmse_naive);
+                    setMetric('metric-mae-naive', forecast.mae_naive);
+                    setMetric('metric-rmse-lr', forecast.rmse_lr);
+                    setMetric('metric-mae-lr', forecast.mae_lr);
+                    setMetric('metric-rmse-seasonal', forecast.rmse_seasonal);
+                    setMetric('metric-mae-seasonal', forecast.mae_seasonal);
+                    setMetric('metric-mean-error', forecast.mean_error);
 
                     actionRequired.textContent = `${baseActionRequired} ${trajectoryNote}`;
-                    
-                    if (forecast.predicted_cases !== null) {
-                        const forecastIndex = targetWeek - 1;
-                        if (forecastIndex >= weeklyLabels.length) {
-                            weeklyLabels.push(`MW ${targetWeek}`);
-                            weeklyValues.push(null);
-                            trend.baseline_75th.push(null);
-                            chart.data.labels.push(`MW ${targetWeek}`);
-                            chart.data.datasets[0].data.push(null);
-                            chart.data.datasets[1].data.push(null);
-                        }
-                        const forecastData = weeklyForecastData(targetWeek, predictedCases);
-                        if (forecastData) {
-                            forecastDataset.data = forecastData;
-                            forecastDataset.hidden = false;
-                            chart.update();
-                        }
+
+                    forecastDataset.data = weeklyForecastData(forecasts, Number(forecast.current_week), currentCases, 'predicted_cases');
+                    intervalLowerDataset.data = weeklyForecastData(forecasts, Number(forecast.current_week), currentCases, 'lower_bound');
+                    intervalUpperDataset.data = weeklyForecastData(forecasts, Number(forecast.current_week), currentCases, 'upper_bound');
+                    forecastDataset.label = forecasts.length > 1 ? 'Multi-Week Projection' : 'Next Week Projection';
+                    forecastDataset.hidden = activePeriod !== 'weekly';
+                    intervalLowerDataset.hidden = forecasts.length < 2 || activePeriod !== 'weekly';
+                    intervalUpperDataset.hidden = forecasts.length < 2 || activePeriod !== 'weekly';
+                    const intervalNote = document.getElementById('forecast-interval-note');
+                    if (intervalNote) {
+                        intervalNote.hidden = forecasts.length < 2 || activePeriod !== 'weekly';
                     }
+                    chart.update();
                 })
                 .catch(() => {
+                    if (requestId !== forecastRequestId) {
+                        return;
+                    }
                     forecastValue.textContent = 'Unavailable';
                     forecastDirection.textContent = '';
                     forecastDirection.className = 'badge d-none mt-1';
                     actionRequired.textContent = baseActionRequired;
+                    forecastDataset.hidden = true;
+                    intervalLowerDataset.hidden = true;
+                    intervalUpperDataset.hidden = true;
+                    chart.update();
                 });
         };
 
         loadForecast();
+        if (forecastHorizon) {
+            forecastHorizon.addEventListener('change', () => loadForecast(Number(forecastHorizon.value)));
+        }
         const periodButtons = document.querySelectorAll('.trend-period-button');
         periodButtons.forEach(button => {
             button.addEventListener('click', () => {
                 const monthly = button.dataset.period === 'monthly';
+                activePeriod = monthly ? 'monthly' : 'weekly';
                 chart.data.labels = monthly ? monthlyLabels : weeklyLabels;
                 chart.data.datasets[0].data = monthly ? monthlyValues : weeklyValues;
                 chart.data.datasets[1].data = monthly ? monthlyBaseline : trend.baseline_75th;
-                forecastDataset.hidden = monthly;
+                forecastDataset.hidden = monthly || !Array.isArray(forecastDataset.data) || !forecastDataset.data.some(value => value !== null);
+                intervalLowerDataset.hidden = monthly || Number(forecastHorizon && forecastHorizon.value) < 2;
+                intervalUpperDataset.hidden = monthly || Number(forecastHorizon && forecastHorizon.value) < 2;
+                const intervalNote = document.getElementById('forecast-interval-note');
+                if (intervalNote) {
+                    intervalNote.hidden = monthly || Number(forecastHorizon && forecastHorizon.value) < 2;
+                }
                 periodButtons.forEach(periodButton => {
                     const active = periodButton === button;
                     periodButton.classList.toggle('btn-primary', active);
@@ -408,5 +603,26 @@
             });
         });
     }
+
+    const caseViewButtons = document.querySelectorAll('.case-view-button');
+    const caseTotalPanel = document.getElementById('case-total-panel');
+    const caseBreakdownPanel = document.getElementById('case-breakdown-panel');
+    caseViewButtons.forEach(button => {
+        button.addEventListener('click', () => {
+            const showBreakdown = button.dataset.view === 'breakdown';
+            if (caseTotalPanel) {
+                caseTotalPanel.hidden = showBreakdown;
+            }
+            if (caseBreakdownPanel) {
+                caseBreakdownPanel.hidden = !showBreakdown;
+            }
+            caseViewButtons.forEach(viewButton => {
+                const active = viewButton === button;
+                viewButton.classList.toggle('btn-primary', active);
+                viewButton.classList.toggle('btn-outline-primary', !active);
+                viewButton.setAttribute('aria-pressed', String(active));
+            });
+        });
+    });
 </script>
 {% endblock %}

@@ -452,6 +452,8 @@ def dashboard_forecast_api():
     trend = get_dashboard_trend(current_year)
     requested_week = request.args.get('week', type=int)
     current_week = requested_week if requested_week and 1 <= requested_week <= 52 else trend['current_week']
+    horizon = request.args.get('horizon', default=1, type=int)
+    horizon = max(1, min(horizon, 8))
     target_week = current_week + 1
 
     grouped_counts = db.session.query(
@@ -472,8 +474,15 @@ def dashboard_forecast_api():
             'predicted_cases': None,
             'diff': None,
             'rmse_rf': None,
+            'mae_rf': None,
             'rmse_naive': None,
+            'mae_naive': None,
+            'rmse_lr': None,
+            'mae_lr': None,
+            'rmse_seasonal': None,
+            'mae_seasonal': None,
             'mean_error': None,
+            'forecasts': [],
         })
 
     counts_by_week = {int(week): int(count) for week, count in grouped_counts}
@@ -485,8 +494,15 @@ def dashboard_forecast_api():
             'predicted_cases': None,
             'diff': None,
             'rmse_rf': None,
+            'mae_rf': None,
             'rmse_naive': None,
+            'mae_naive': None,
+            'rmse_lr': None,
+            'mae_lr': None,
+            'rmse_seasonal': None,
+            'mae_seasonal': None,
             'mean_error': None,
+            'forecasts': [],
         })
 
     latest_cases = counts_by_week[current_week]
@@ -505,8 +521,15 @@ def dashboard_forecast_api():
             'predicted_cases': None,
             'diff': None,
             'rmse_rf': None,
+            'mae_rf': None,
             'rmse_naive': None,
+            'mae_naive': None,
+            'rmse_lr': None,
+            'mae_lr': None,
+            'rmse_seasonal': None,
+            'mae_seasonal': None,
             'mean_error': None,
+            'forecasts': [],
         })
 
     # 1. Prepare Features & Target
@@ -544,7 +567,7 @@ def dashboard_forecast_api():
             param_grid=param_grid,
             cv=tscv,
             scoring='neg_mean_squared_error',
-            n_jobs=-1
+            n_jobs=1
         )
         grid_search.fit(X, y)
         model = grid_search.best_estimator_
@@ -559,12 +582,14 @@ def dashboard_forecast_api():
     y_naive = X['lag_1']
     y_actual_naive = y.loc[y_naive.index]
     rmse_naive = round(float(np.sqrt(mean_squared_error(y_actual_naive, y_naive))), 2)
+    mae_naive = round(float(mean_absolute_error(y_actual_naive, y_naive)), 2)
 
     # 3. Linear Regression Baseline 
     lr_model = LinearRegression()
     lr_model.fit(X, y)
     y_pred_lr = lr_model.predict(X)
     rmse_lr = round(float(np.sqrt(mean_squared_error(y, y_pred_lr))), 2)
+    mae_lr = round(float(mean_absolute_error(y, y_pred_lr)), 2)
 
     # 4. Historical Seasonal Median Baseline 
     historical_medians = trend['median'] # from get_dashboard_trend()
@@ -573,15 +598,28 @@ def dashboard_forecast_api():
         else (historical_medians[int(w) - 1] if 1 <= int(w) <= len(historical_medians) else y.mean())
     )
     rmse_seasonal = round(float(np.sqrt(mean_squared_error(y, y_seasonal_baseline))), 2)
+    mae_seasonal = round(float(mean_absolute_error(y, y_seasonal_baseline)), 2)
 
-    # Forecast next point
-    latest_counts = weekly_counts.iloc[-1]
-    forecast = model.predict(pd.DataFrame([{
-        'lag_1': latest_counts['case_count'],
-        'lag_2': latest_counts['lag_1'],
-        'morbidity_week': target_week,
-    }]))[0]
-    predicted_cases = round(max(0, float(forecast)), 2)
+    forecast_history = weekly_counts['case_count'].astype(float).tolist()
+    forecasts = []
+    for step in range(1, horizon + 1):
+        forecast_week = current_week + step
+        forecast_value = model.predict(pd.DataFrame([{
+            'lag_1': forecast_history[-1],
+            'lag_2': forecast_history[-2],
+            'morbidity_week': forecast_week,
+        }]))[0]
+        forecast_value = max(0, float(forecast_value))
+        uncertainty = 1.96 * rmse_rf * np.sqrt(step)
+        forecasts.append({
+            'week': forecast_week,
+            'predicted_cases': round(forecast_value, 2),
+            'lower_bound': round(max(0, forecast_value - uncertainty), 2),
+            'upper_bound': round(forecast_value + uncertainty, 2),
+        })
+        forecast_history.append(forecast_value)
+
+    predicted_cases = forecasts[0]['predicted_cases']
 
     return jsonify({
         'current_week': current_week,
@@ -592,9 +630,13 @@ def dashboard_forecast_api():
         'rmse_rf': rmse_rf,
         'mae_rf': mae_rf,
         'rmse_naive': rmse_naive,
+        'mae_naive': mae_naive,
         'rmse_lr': rmse_lr,
+        'mae_lr': mae_lr,
         'rmse_seasonal': rmse_seasonal,
+        'mae_seasonal': mae_seasonal,
         'mean_error': mean_error,
+        'forecasts': forecasts,
     })
 
 @app.route('/dashboard')
@@ -682,6 +724,45 @@ def dashboard():
         bucket = '0-17' if age < 18 else '18-34' if age < 35 else '35-54' if age < 55 else '55+'
         age_distribution[bucket] += 1
 
+    sex_distribution = {'Male': 0, 'Female': 0, 'Other / unavailable': 0}
+    for record in confirmed_records:
+        sex = str(record.sex or '').strip().lower()
+        if sex in {'m', 'male'}:
+            sex_distribution['Male'] += 1
+        elif sex in {'f', 'female'}:
+            sex_distribution['Female'] += 1
+        else:
+            sex_distribution['Other / unavailable'] += 1
+
+    clinical_breakdown = {
+        'Severe': 0,
+        'Non-severe': 0,
+        'Unavailable': 0,
+    }
+    case_breakdown = {
+        'Confirmed': 0,
+        'Suspected': 0,
+        'Other / unavailable': 0,
+    }
+    for record in records_list:
+        clinical_classification = str(record.clinical_classification or '').strip().lower()
+        if not is_available_dashboard_value(clinical_classification):
+            clinical_breakdown['Unavailable'] += 1
+        elif 'severe' in clinical_classification and 'non-severe' not in clinical_classification:
+            clinical_breakdown['Severe'] += 1
+        else:
+            clinical_breakdown['Non-severe'] += 1
+
+        case_classification = str(record.case_classification or '').strip().lower()
+        if not is_available_dashboard_value(case_classification):
+            case_breakdown['Other / unavailable'] += 1
+        elif 'confirmed' in case_classification:
+            case_breakdown['Confirmed'] += 1
+        elif 'suspected' in case_classification:
+            case_breakdown['Suspected'] += 1
+        else:
+            case_breakdown['Other / unavailable'] += 1
+
     # Pagination logic
     per_page = 10
     total_clusters = len(clusters)
@@ -713,6 +794,9 @@ def dashboard():
         morbidity_week_trends=morbidity_week_trends,
         trend=trend,
         age_distribution=age_distribution,
+        sex_distribution=sex_distribution,
+        clinical_breakdown=clinical_breakdown,
+        case_breakdown=case_breakdown,
         available_years=available_years,
         selected_year=selected_year,
         watchlist=watchlist,
