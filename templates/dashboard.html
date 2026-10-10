@@ -26,8 +26,12 @@
     <div class="alert-banner-content">
         <div class="alert-left-content">
             <span class="badge text-bg-{{ risk_classes[trend.risk_level] }} mb-2">{{ trend.risk_level }} - {{ trend.risk_label }}</span>
+            {% if trend.weekly_data_available %}
             <h5 class="alert-heading mb-1 fw-bold">Early warning status for MW {{ trend.current_week }} ({{ trend.week_date_range }})</h5>
-            <div class="small">{{ trend.current_count }} reported cases | {% if trend.has_baseline_data and trend.current_threshold > 0 %}Epidemic Threshold: {{ trend.current_threshold }}{% else %}Baseline N/A{% endif %}</div>
+            {% else %}
+            <h5 class="alert-heading mb-1 fw-bold">Early warning status for {{ selected_year }} (morbidity week unavailable)</h5>
+            {% endif %}
+            <div class="small">{% if trend.weekly_data_available %}{{ trend.current_count }} reported cases{% else %}Weekly case count unavailable{% endif %} | {% if not trend.weekly_data_available %}Weekly comparison unavailable{% elif trend.has_baseline_data and trend.current_threshold > 0 %}Historical 75th percentile: {{ trend.current_threshold }}{% else %}Baseline N/A{% endif %}</div>
             <div id="dashboard-action-required" class="small mt-1">{{ trend.action_required }}</div>
         </div>
         <div class="alert-right-content text-end">
@@ -186,12 +190,15 @@
         <div class="card border-0 shadow-sm p-4 h-100">
             <h5 class="fw-bold mb-3">Intervention Priority Watchlist</h5>
             <div class="list-group list-group-flush">
+                {% if not trend.weekly_data_available %}
+                <p class="text-muted mb-0">Weekly intervention priorities are unavailable because this year's records do not include morbidity weeks.</p>
+                {% else %}
                 {% for item in watchlist[(page - 1) * 10 : page * 10] %}
                 <div class="list-group-item d-flex justify-content-between align-items-center bg-transparent px-0 py-2">
                     <div class="me-2">
                         <div class="fw-semibold text-dark">{{ item.name }}</div>
                         <small class="text-muted">
-                            {{ item.active_cases }} active (MW {{ active_week }}) &bull; {{ item.total_ytd }} YTD
+                            {{ item.active_cases }} active (MW {{ active_week }}) &bull; {{ item.total_ytd }} {{ watchlist_period_label }}
                         </small>
                     </div>
                     <span class="badge bg-{{ item.status_color }}">{{ item.status }}</span>
@@ -199,6 +206,7 @@
                 {% else %}
                 <p class="text-muted mb-0">No intervention priorities identified</p>
                 {% endfor %}
+                {% endif %}
             </div>
 
             {% if watchlist and total_pages > 1 %}
@@ -353,7 +361,7 @@
             data: {
                 labels: weeklyLabels,
                 datasets: [{
-                    label: 'Current year cases',
+                    label: 'Current year confirmed cases',
                     data: weeklyValues,
                     borderColor: '#0d6efd',
                     backgroundColor: 'rgba(13,110,253,0.15)',
@@ -361,7 +369,7 @@
                     tension: 0.3,
                     pointRadius: 2
                 }, {
-                    label: 'Historical 75th percentile',
+                    label: 'Historical confirmed-case 75th percentile',
                     data: trend.baseline_75th,
                     borderColor: '#dc3545',
                     backgroundColor: 'transparent',

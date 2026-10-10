@@ -133,7 +133,7 @@ class UploadHeaderCompatibilityTest(unittest.TestCase):
                 case_ids = {row.case_id for row in DengueRecord.query.all()}
                 self.assertTrue(any(case_id.startswith('DENGUE') for case_id in case_ids))
 
-    def test_upload_estimates_missing_morbidity_week_from_month(self):
+    def test_upload_keeps_missing_morbidity_week_unavailable(self):
         from app import DengueRecord
         import io
 
@@ -162,7 +162,7 @@ class UploadHeaderCompatibilityTest(unittest.TestCase):
             with app.app_context():
                 record = DengueRecord.query.filter_by(case_id='W-100').first()
                 self.assertIsNotNone(record)
-                self.assertEqual(record.morbidity_week, 6)
+                self.assertIsNone(record.morbidity_week)
 
     def test_manual_entry_saves_selected_year(self):
         from app import DengueRecord

@@ -17,6 +17,7 @@ from sqlalchemy import event, text, or_
 from sqlalchemy.engine import Engine
 from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
+from utils import log_memory_usage
 
 load_dotenv() 
 
@@ -33,7 +34,6 @@ def database_file_looks_encrypted():
     except OSError:
         return False
 
-
     # Guard: Block execution if an encrypted database file exists without a passphrase
 if not DB_PASSPHRASE and database_file_looks_encrypted():
     print("\n" + "=" * 60)
@@ -42,7 +42,6 @@ if not DB_PASSPHRASE and database_file_looks_encrypted():
     print("Please set DB_PASSPHRASE in your .env file or terminal.")
     print("=" * 60 + "\n")
     sys.exit(1)
-
 
 if not DB_PASSPHRASE and database_file_looks_encrypted():
     raise RuntimeError(
@@ -67,7 +66,6 @@ db = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
-
 if DB_PASSPHRASE:
     @event.listens_for(Engine, 'connect')
     def set_sqlcipher_key(dbapi_connection, connection_record):
@@ -77,11 +75,9 @@ if DB_PASSPHRASE:
         if not cipher_version or not cipher_version[0]:
             raise RuntimeError('DB_PASSPHRASE requires a SQLCipher-enabled SQLite driver.')
 
-
 @app.before_request
 def ensure_admin_on_every_request():
     ensure_primary_admin_account()
-
 
 @app.before_request
 def require_password_change_completion():
@@ -91,7 +87,6 @@ def require_password_change_completion():
         and request.endpoint not in {'change_password', 'logout', 'static'}
     ):
         return redirect(url_for('change_password'))
-
 
 # ==========================================
 # DATABASE SCHEMAS (With RBAC and Permissions)
@@ -130,7 +125,6 @@ class DengueRecord(db.Model):
     case_classification = db.Column(db.String(100), nullable=True)
     sync_status = db.Column(db.String(20), default='Synced')  # 'Manual/Local' or 'Synced'
 
-
 def ensure_primary_admin_account():
     try:
         with app.app_context():
@@ -167,6 +161,15 @@ def ensure_primary_admin_account():
 def load_user(user_id):
     user = db.session.get(User, int(user_id))
     return user if user and not user.is_blocked else None
+
+class SystemEvaluation(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    evaluator_role = db.Column(db.String(50), nullable=False) # e.g., 'BHW', 'City Health Officer'
+    task_completion_seconds = db.Column(db.Float, nullable=False)
+    sus_score = db.Column(db.Float, nullable=False) # Standard 0-100 SUS score
+    watchlist_agreement = db.Column(db.String(20), nullable=False) # 'Agree', 'Neutral', 'Disagree'
+    notes = db.Column(db.Text, nullable=True)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
 @app.route('/evaluation', methods=['GET', 'POST'])
 @login_required
@@ -205,15 +208,6 @@ def evaluation():
     
     return render_template('evaluation.html', evaluations=evaluations, avg_sus=avg_sus, avg_time=avg_time)
 
-class SystemEvaluation(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    evaluator_role = db.Column(db.String(50), nullable=False) # e.g., 'BHW', 'City Health Officer'
-    task_completion_seconds = db.Column(db.Float, nullable=False)
-    sus_score = db.Column(db.Float, nullable=False) # Standard 0-100 SUS score
-    watchlist_agreement = db.Column(db.String(20), nullable=False) # 'Agree', 'Neutral', 'Disagree'
-    notes = db.Column(db.Text, nullable=True)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
-
 # ==========================================
 # AUTHENTICATION ROUTES
 # ==========================================
@@ -246,7 +240,6 @@ def login():
             flash('Invalid username or password. Please try again.', 'error')
         
     return render_template('login.html')
-
 
 @app.route('/change-password', methods=['GET', 'POST'])
 @login_required
@@ -285,10 +278,15 @@ def logout():
 # Screen 2: Main Surveillance Dashboard (Tiers 1, 2, & 3)
 NULL_LIKE_VALUES = {'', 'nan', 'n/a', 'na', 'null', 'none', 'unavailable'}
 
-
 def is_available_dashboard_value(value):
     return value is not None and str(value).strip().lower() not in NULL_LIKE_VALUES
 
+@app.route('/test-load')
+@login_required
+def load_dashboard():
+    # Log memory before/after loading heavy templates or data
+    log_memory_usage("During Dashboard Load")
+    return render_template('dashboard.html', user=current_user)
 
 def get_dashboard_years():
     return [
@@ -300,7 +298,6 @@ def get_dashboard_years():
         .all()
     ]
 
-
 def get_morbidity_week_date_range(year, morbidity_week):
     year_start = date(year, 1, 1)
     first_week_start = year_start - timedelta(days=(year_start.weekday() + 1) % 7)
@@ -309,7 +306,6 @@ def get_morbidity_week_date_range(year, morbidity_week):
     start_label = f'{week_start.strftime("%b")} {week_start.day}'
     end_label = f'{week_end.strftime("%b")} {week_end.day}, {week_end.year}'
     return f'{start_label} \u2013 {end_label}'
-
 
 def evaluate_dashboard_alert(current_count, baseline_threshold):
     pre_surge_threshold = round(0.75 * baseline_threshold, 2)
@@ -336,10 +332,18 @@ def evaluate_dashboard_alert(current_count, baseline_threshold):
         }
     return {
         'risk_level': 'RED',
-        'risk_label': 'High-Risk State',
+        'risk_label': 'Surge State',
         'recommendation': 'Threshold Breach & Targeted Intervention',
         'action_required': 'Action Required: Initiate targeted vector control and localized response.',
     }
+
+
+def get_intervention_priority(active_cases):
+    if active_cases >= 5:
+        return 'SURGE', 'danger'
+    if active_cases >= 2:
+        return 'RISING', 'warning'
+    return 'STABLE', 'success'
 
 
 def get_dashboard_trend(current_year=None):
@@ -348,13 +352,29 @@ def get_dashboard_trend(current_year=None):
     def calculate_quantile(values, quantile):
         return round(pd.Series(values, dtype='float64').quantile(quantile), 2) if values else 0
 
+    relevant_years = baseline_years + (current_year,)
+    reported_week_rows = db.session.query(
+        DengueRecord.year,
+        DengueRecord.morbidity_week,
+    ).filter(
+        DengueRecord.year.in_(relevant_years),
+        DengueRecord.morbidity_week.between(1, 52),
+    ).distinct().all()
+    reported_weeks_by_year = {}
+    for year, week in reported_week_rows:
+        if year is not None and week is not None:
+            reported_weeks_by_year.setdefault(int(year), set()).add(int(week))
+
+    weekly_baseline_years = tuple(
+        year for year in baseline_years if year in reported_weeks_by_year
+    )
+    weekly_years = weekly_baseline_years + (current_year,)
     grouped_counts = db.session.query(
         DengueRecord.year,
         DengueRecord.morbidity_week,
         db.func.count(DengueRecord.id),
     ).filter(
-        DengueRecord.year.in_(baseline_years + (current_year,)),
-        DengueRecord.morbidity_week.isnot(None),
+        DengueRecord.year.in_(weekly_years),
         DengueRecord.morbidity_week.between(1, 52),
         DengueRecord.case_classification.ilike('%confirmed%')
     ).group_by(DengueRecord.year, DengueRecord.morbidity_week).all()
@@ -365,8 +385,11 @@ def get_dashboard_trend(current_year=None):
         if year is not None and week is not None
     }
     current_actual = [counts_by_year_week.get((current_year, week), 0) for week in range(1, 53)]
+    current_week_data_available = current_year in reported_weeks_by_year
+    if not current_week_data_available:
+        current_actual = [None] * 52
     historical_values = [
-        [counts_by_year_week.get((year, week), 0) for year in baseline_years]
+        [counts_by_year_week.get((year, week), 0) for year in weekly_baseline_years]
         for week in range(1, 53)
     ]
     median = [calculate_quantile(values, 0.5) for values in historical_values]
@@ -377,9 +400,10 @@ def get_dashboard_trend(current_year=None):
         DengueRecord.morbidity_month,
         db.func.count(DengueRecord.id),
     ).filter(
-        DengueRecord.year.in_(baseline_years + (current_year,)),
+        DengueRecord.year.in_(relevant_years),
         DengueRecord.morbidity_month.isnot(None),
         DengueRecord.morbidity_month.between(1, 12),
+        DengueRecord.case_classification.ilike('%confirmed%'),
     ).group_by(DengueRecord.year, DengueRecord.morbidity_month).all()
     counts_by_year_month = {
         (int(year), int(month)): int(count)
@@ -396,22 +420,29 @@ def get_dashboard_trend(current_year=None):
 
     active_year = datetime.now().year
     if current_year == active_year:
-        reported_weeks = [week for week, count in zip(range(1, 53), current_actual) if count > 0]
+        reported_weeks = sorted(reported_weeks_by_year.get(current_year, set()))
         current_week = max(reported_weeks) if reported_weeks else min(datetime.now().isocalendar().week, 52)
     else:
-        peak_count = max(current_actual, default=0)
-        current_week = current_actual.index(peak_count) + 1 if peak_count > 0 else 52
+        reported_weeks = reported_weeks_by_year.get(current_year, set())
+        current_week = max(reported_weeks) if reported_weeks else 52
     current_index = current_week - 1
     current_count = current_actual[current_index]
     current_median = median[current_index]
     current_threshold = percentile_75[current_index]
-    has_baseline_data = bool(baseline_years) and any(any(values) for values in historical_values)
+    has_baseline_data = bool(weekly_baseline_years)
     if not has_baseline_data:
         alert = {
             'risk_level': 'BLUE',
             'risk_label': 'Historical Baseline',
             'recommendation': 'Historical baseline reference only.',
             'action_required': 'Insufficient prior historical data to establish a P75 epidemic threshold.',
+        }
+    elif not current_week_data_available:
+        alert = {
+            'risk_level': 'BLUE',
+            'risk_label': 'Weekly Data Unavailable',
+            'recommendation': 'Weekly alert unavailable.',
+            'action_required': 'Morbidity-week data is unavailable for this year; review monthly trends instead.',
         }
     else:
         alert = evaluate_dashboard_alert(current_count, current_threshold)
@@ -432,17 +463,16 @@ def get_dashboard_trend(current_year=None):
         'current_median': current_median,
         'current_threshold': current_threshold,
         'has_baseline_data': has_baseline_data,
+        'weekly_data_available': current_week_data_available,
         'pre_surge_threshold': round(0.75 * current_threshold, 2),
         **alert,
     }
-
 
 @app.route('/api/dashboard/trend')
 @login_required
 def dashboard_trend_api():
     requested_year = request.args.get('year', type=int)
     return jsonify(get_dashboard_trend(requested_year))
-
 
 @app.route('/api/dashboard/forecast')
 @login_required
@@ -679,20 +709,11 @@ def dashboard():
 
     # 2. Build Intervention Priority Watchlist using active week metrics
     watchlist = []
-    for barangay in clusters:
+    for barangay in clusters if trend['weekly_data_available'] else ():
         active_cases = active_week_counts.get(barangay, 0)
         total_ytd = barangay_counts.get(barangay, 0)
 
-        # Assign risk status tags based on active week case volume
-        if active_cases >= 5:
-            status = 'SURGE'
-            status_color = 'danger'
-        elif active_cases >= 2:
-            status = 'RISING'
-            status_color = 'warning'
-        else:
-            status = 'STABLE'
-            status_color = 'success'
+        status, status_color = get_intervention_priority(active_cases)
 
         watchlist.append({
             'name': barangay,
@@ -801,6 +822,7 @@ def dashboard():
         selected_year=selected_year,
         watchlist=watchlist,
         active_week=active_week,
+        watchlist_period_label='YTD' if selected_year == datetime.now().year else 'Annual',
     )
 
 # Screen 3: Data Entry, CSV Ingestion, and Offline Sync
@@ -969,15 +991,6 @@ def get_report_summary_for_year(year_value):
     return summary
 
 
-def estimate_morbidity_week(month_value):
-    month = safe_int(month_value, default=None)
-    if month is None:
-        return None
-    if month < 1:
-        return None
-    return max(1, min(52, (month * 4) - 2))
-
-
 def detect_upload_year(df=None, filename=''):
     if df is not None:
         for column in df.columns:
@@ -1076,10 +1089,6 @@ def build_standardized_upload_df(df, filename=''):
     df['morbidity_month'] = df['morbidity_month'].apply(
         lambda value: max(1, min(12, int(value))) if pd.notna(value) else 1
     )
-
-    missing_week_mask = df['morbidity_week'].isna() & df['morbidity_month'].notna()
-    if missing_week_mask.any():
-        df.loc[missing_week_mask, 'morbidity_week'] = df.loc[missing_week_mask, 'morbidity_month'].apply(estimate_morbidity_week)
 
     df['morbidity_week'] = df['morbidity_week'].apply(
         lambda value: int(value) if pd.notna(value) else None
@@ -1303,7 +1312,7 @@ def records():
                                 case_id=candidate_case_id,
                                 year=safe_int(row.get('year'), datetime.now().year),
                                 morbidity_month=safe_int(row.get('morbidity_month'), 1),
-                                morbidity_week=safe_int(row.get('morbidity_week')) if safe_int(row.get('morbidity_week')) is not None else estimate_morbidity_week(row.get('morbidity_month')),
+                                morbidity_week=safe_int(row.get('morbidity_week')),
                                 district=str(row.get('district') or 'Unavailable').strip() or 'Unavailable',
                                 barangay=str(row.get('barangay') or 'Unavailable').strip() or 'Unavailable',
                                 age=safe_int(row.get('age'), 0),
