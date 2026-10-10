@@ -4,19 +4,61 @@ LokalHealth is a Flask web application for dengue case surveillance. It provides
 case-record management, a surveillance dashboard, weekly trend and forecast
 views, barangay summaries, reports, and basic user administration.
 
-This guide covers cloning the repository, setting up a local environment, and
-starting the application.
+This guide covers downloading the source, installing the required software and
+Python packages, and starting the application. Downloading the ZIP gives you
+the source files only; it does not install Python, Flask, or the other packages
+the application uses.
 
 ## Requirements
 
-- Python 3.10 or newer
-- Git
+- 64-bit Python 3.10 or newer (Python 3.12 is recommended)
+- Git, only if you use the clone instructions instead of downloading a ZIP
 - Internet access for the first-time Python package installation
-- A SQLCipher-enabled `sqlcipher3` installation if you use an encrypted database
 
-The pinned Python packages are listed in `requirements.txt`. The app creates its
-database and tables on startup. A new installation has no case records; add
-records through the application or load an authorized dataset after signing in.
+Install Python from [python.org](https://www.python.org/downloads/windows/). In
+the installer, enable **Add python.exe to PATH**. The Python launcher (`py`) is
+also used in the commands below. If `py` is not recognized, rerun the Python
+installer and enable the launcher, or use the `python` command if it is
+available.
+
+The pinned Python packages, including Flask, are listed in `requirements.txt`.
+They must be installed in the virtual environment before the app is started.
+The app creates its database and tables on startup. A new installation has no
+case records; add records through the application or load an authorized dataset
+after signing in.
+
+## Download and extract the source
+
+Choose one method:
+
+- **ZIP (no Git required):** Open the
+  [LokalHealth GitHub repository](https://github.com/DessDagondon/lokalhealth),
+  select **Code** > **Download ZIP**, then extract the ZIP using File Explorer.
+  Do not run the app from inside the ZIP preview.
+- **Git:** Clone the repository using the commands below.
+
+Open PowerShell in the extracted project folder (or cloned folder). It must be
+the folder containing `app.py` and `requirements.txt`. For example, if the ZIP
+was extracted to Downloads:
+
+```powershell
+cd "$HOME\Downloads\lokalhealth-main"
+Get-ChildItem app.py, requirements.txt
+```
+
+If extraction created a second nested `lokalhealth-main` folder, change into
+that inner folder instead. `Get-ChildItem` should list both files before you
+continue.
+
+### About `.gitignore` in a ZIP download
+
+`.gitignore` is a tracked project file and is not excluded by its own rules.
+The GitHub ZIP normally includes it. If it is not visible in the extracted
+folder, you can download the
+[`.gitignore` file directly](https://raw.githubusercontent.com/DessDagondon/lokalhealth/main/.gitignore).
+The file only tells Git which local files not to track; it is not needed to
+install dependencies or run the application. In particular, it does not contain
+Flask or any other program dependency.
 
 ## Clone the repository
 
@@ -37,10 +79,19 @@ py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
-If PowerShell cannot find `py`, install Python from python.org and ensure the
-Python launcher is available. In Command Prompt, activate the environment with:
+If PowerShell prevents activation because script execution is disabled, allow
+activation for this PowerShell process and try again:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1
+```
+
+Alternatively, in Command Prompt (not PowerShell), create and activate the
+environment with:
 
 ```bat
+py -3 -m venv .venv
 .\.venv\Scripts\activate.bat
 ```
 
@@ -55,15 +106,22 @@ source .venv/bin/activate
 
 With the virtual environment activated:
 
-```bash
+```powershell
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+python -m pip show Flask
 ```
 
-The project includes `sqlcipher3` for encrypted database support. If its
-installation fails on your operating system, install the platform's required
-SQLCipher development library and compiler, then retry the requirements
-installation.
+The `pip show Flask` command should print the installed package details. Use
+`python -m pip` (rather than a bare `pip`) so packages are installed for the
+same Python interpreter that will run the app. The `requirements.txt` install
+includes Flask and all other application dependencies, including `sqlcipher3`
+for encrypted database support.
+
+If installation reports an error, do not continue to start the app: resolve the
+package installation error first. Keep the complete error output, especially if
+it names `sqlcipher3`, as its native build prerequisites vary by operating
+system.
 
 ## Configure the database
 
@@ -88,9 +146,10 @@ An existing encrypted database cannot be opened without its original
 
 ## Start the application
 
-From the project root, with the virtual environment activated:
+From the project root, with the virtual environment activated and dependencies
+installed:
 
-```bash
+```powershell
 python app.py
 ```
 
@@ -109,12 +168,35 @@ Open <http://127.0.0.1:5000> in your browser. Stop the development server with
 
 Run the test suite from the project root with the virtual environment activated:
 
-```bash
+```powershell
 python -m unittest discover -s tests -v
 ```
 
 ## Troubleshooting
 
+- **`ModuleNotFoundError: No module named 'flask'`:** Flask is not installed
+  into the Python environment running the app. From the project folder, activate
+  the environment and install the requirements:
+
+  ```powershell
+  .\.venv\Scripts\Activate.ps1
+  python -m pip install -r requirements.txt
+  python -m pip show Flask
+  python app.py
+  ```
+
+  If you already see `(.venv)` in the prompt but still get this error, the
+  environment may simply not have had its packages installed. `python -m pip`
+  ensures installation uses the active `python`. Check which interpreter is
+  active with `python -c "import sys; print(sys.executable)"`; its path should
+  be inside this project's `.venv` directory. If the `pip install` command
+  fails, fix that installation error before retrying `python app.py`.
+- **`py` or `python` is not recognized:** Install 64-bit Python from
+  [python.org](https://www.python.org/downloads/windows/), enable the Python
+  launcher and **Add python.exe to PATH**, then close and reopen PowerShell.
+- **`requirements.txt` is not found:** Change directory to the extracted
+  project folder containing both `app.py` and `requirements.txt`. Do not run
+  setup commands from the ZIP file itself or an outer folder.
 - **`DB_PASSPHRASE` is missing:** If `instance/database.db` is encrypted, set
   the original passphrase in the root `.env` file before starting the app.
 - **SQLCipher driver error:** Confirm `sqlcipher3` installed successfully in the
