@@ -191,6 +191,20 @@ python -m unittest discover -s tests -v
   active with `python -c "import sys; print(sys.executable)"`; its path should
   be inside this project's `.venv` directory. If the `pip install` command
   fails, fix that installation error before retrying `python app.py`.
+- **`ModuleNotFoundError: No module named 'psutil'`:** This project needs
+  `psutil` for its startup and dashboard memory-usage logging. Update the
+  checkout to the latest project files, then, from the project folder with its
+  virtual environment active, run:
+
+  ```powershell
+  python -m pip install -r requirements.txt
+  python app.py
+  ```
+
+  If you cannot update the checkout yet, install the missing package into the
+  active environment with `python -m pip install psutil==7.2.2`. Updating the
+  checkout and reinstalling from `requirements.txt` is preferred so the
+  environment matches the project's declared dependencies.
 - **`py` or `python` is not recognized:** Install 64-bit Python from
   [python.org](https://www.python.org/downloads/windows/), enable the Python
   launcher and **Add python.exe to PATH**, then close and reopen PowerShell.
