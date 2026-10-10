@@ -213,6 +213,16 @@ python -m unittest discover -s tests -v
   setup commands from the ZIP file itself or an outer folder.
 - **`DB_PASSPHRASE` is missing:** If `instance/database.db` is encrypted, set
   the original passphrase in the root `.env` file before starting the app.
+- **SQLCipher `OperationalError: unable to open database file`:** Make sure
+  you are running `python app.py` from the extracted project folder containing
+  `app.py`, and that your Windows account can create files there. The app
+  creates its `instance` folder automatically; if you are using an older
+  checkout, create it manually from the project folder with
+  `New-Item -ItemType Directory -Force instance`. If you only want to try a
+  fresh local database, remove any `DB_PASSPHRASE` entry you added to `.env`
+  and restart the app. If you are opening an existing encrypted database, keep
+  its original passphrase and database together; do not delete or replace the
+  database to work around this error.
 - **SQLCipher driver error:** Confirm `sqlcipher3` installed successfully in the
   active virtual environment and that the platform's SQLCipher build
   prerequisites are installed.

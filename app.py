@@ -24,6 +24,7 @@ load_dotenv()
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'lokalhealth-epidemiological-secret-key-2026'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+os.makedirs(app.instance_path, exist_ok=True)
 DB_PASSPHRASE = os.environ.get('DB_PASSPHRASE')
 
 def database_file_looks_encrypted():
