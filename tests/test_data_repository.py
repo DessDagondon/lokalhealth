@@ -294,10 +294,13 @@ class DataRepositoryRouteTest(unittest.TestCase):
             self.assertNotIn('audit-user', body)
             self.assertNotIn('created-case', body)
 
-    def test_manual_record_creation_is_included_in_audit_history(self):
+    def test_late_manual_and_uploaded_records_stay_active_after_year_archived(self):
         with app.test_client() as client:
             client.post('/login', data={'username': 'repoadmin', 'password': 'pass'}, follow_redirects=False)
-            response = client.post('/records', data={
+            archive_response = client.post('/repository/toggle-archive/2025', follow_redirects=False)
+            self.assertEqual(archive_response.status_code, 302)
+
+            manual_response = client.post('/records', data={
                 'manual_entry': '1',
                 'case_id': 'AUDIT-CREATE-001',
                 'year': '2025',
@@ -310,14 +313,53 @@ class DataRepositoryRouteTest(unittest.TestCase):
                 'clinical_classification': 'Dengue without Warning Signs',
                 'case_classification': 'Confirmed',
             }, follow_redirects=False)
-            self.assertEqual(response.status_code, 200)
+            self.assertEqual(manual_response.status_code, 200)
+
+            csv_data = (
+                'Year,Case ID,Morbidity Month,Morbidity Week,District,Barangay,Age,Sex,'
+                'Clinical Classification,Case Classification\n'
+                '2025,AUDIT-UPLOAD-001,9,36,Talomo,Matina,21,F,'
+                'Dengue without Warning Signs,Confirmed\n'
+            )
+            upload_response = client.post(
+                '/records',
+                data={'file': (BytesIO(csv_data.encode('utf-8')), 'late-2025.csv')},
+                content_type='multipart/form-data',
+                follow_redirects=False,
+            )
+            self.assertEqual(upload_response.status_code, 200)
+
+            repository_response = client.get('/repository?year=2025')
+            repository_body = repository_response.get_data(as_text=True)
+            self.assertEqual(repository_response.status_code, 200)
+            self.assertRegex(repository_body, r'badge bg-success">\s*Active\s*</span>')
+            self.assertIn('2 active records', repository_body)
+            self.assertNotIn('1 records', repository_body)
+            self.assertIn('Archive year', repository_body)
+
+            archive_response = client.get('/archive?year=2025')
+            archive_body = archive_response.get_data(as_text=True)
+            self.assertEqual(archive_response.status_code, 200)
+            self.assertIn('R-2025-001', archive_body)
+            self.assertNotIn('AUDIT-CREATE-001', archive_body)
+            self.assertNotIn('AUDIT-UPLOAD-001', archive_body)
+
+            export_response = client.get('/archive/cases.csv?year=2025')
+            export_body = export_response.get_data(as_text=True)
+            self.assertIn('R-2025-001', export_body)
+            self.assertNotIn('AUDIT-CREATE-001', export_body)
+            self.assertNotIn('AUDIT-UPLOAD-001', export_body)
 
         with app.app_context():
-            record = DengueRecord.query.filter_by(case_id='AUDIT-CREATE-001').one()
-            audit = RecordAuditLog.query.filter_by(record_id=record.id).one()
-            self.assertEqual(audit.action_type, 'CREATE')
-            self.assertEqual(audit.username, 'repoadmin')
-            self.assertEqual(audit.new_value, 'AUDIT-CREATE-001')
+            for case_id in ('AUDIT-CREATE-001', 'AUDIT-UPLOAD-001'):
+                record = DengueRecord.query.filter_by(case_id=case_id).one()
+                self.assertFalse(record.is_archived)
+                audit = RecordAuditLog.query.filter_by(record_id=record.id).one()
+                self.assertEqual(audit.action_type, 'CREATE')
+                self.assertEqual(audit.username, 'repoadmin')
+                self.assertEqual(audit.new_value, case_id)
+            archived_2025 = DengueRecord.query.filter_by(year=2025, is_archived=True).all()
+            self.assertEqual([record.case_id for record in archived_2025], ['R-2025-001'])
 
     def test_edit_record_writes_audit_entries(self):
         with app.app_context():

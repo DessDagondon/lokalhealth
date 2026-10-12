@@ -1293,7 +1293,8 @@ def records():
                     sex=request.form.get('sex', '').strip() or 'Unavailable',
                     clinical_classification=request.form.get('clinical_classification') or 'Unavailable',
                     case_classification=request.form.get('case_classification') or 'Unavailable',
-                    sync_status='Local'
+                    sync_status='Local',
+                    is_archived=False,
                 )
                 db.session.add(record)
                 db.session.flush()
@@ -1359,7 +1360,8 @@ def records():
                                 sex=str(row.get('sex') or 'Unavailable').strip() or 'Unavailable',
                                 clinical_classification=str(row.get('clinical_classification') or 'Unavailable').strip() or 'Unavailable',
                                 case_classification=str(row.get('case_classification') or 'Unavailable').strip() or 'Unavailable',
-                                sync_status='Synced'
+                                sync_status='Synced',
+                                is_archived=False,
                             )
                             db.session.add(record)
                             imported_records.append(record)

@@ -19,10 +19,10 @@
             {% for entry in yearly_availability_summary %}
             <div class="d-flex flex-wrap align-items-center gap-2 border rounded px-3 py-2 bg-light">
                 <span class="fw-semibold">{{ entry.year }}</span>
-                <span class="badge {% if entry.is_archived or entry.is_mixed %}bg-secondary{% else %}bg-success{% endif %}">
-                    {% if entry.is_archived or entry.is_mixed %}Archived{% else %}Active{% endif %}
+                <span class="badge bg-success">
+                    Active
                 </span>
-                <span class="text-muted small">{{ entry.record_count }} records</span>
+                <span class="text-muted small">{{ entry.active_count }} active records</span>
                 {% if not entry.is_archived and (current_user.role == 'Admin' or current_user.can_delete) %}
                 <form method="post" action="{{ url_for('archive_year', year=entry.year, search=search, district=filters.district, barangay=filters.barangay, morbidity_month=filters.morbidity_month, morbidity_week=filters.morbidity_week, case_classification=filters.case_classification, clinical_classification=filters.clinical_classification) }}" class="d-inline">
                     <button type="submit" class="btn btn-sm btn-outline-danger"
