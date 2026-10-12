@@ -22,11 +22,15 @@
                     <option value="Admin">Admin</option>
                 </select>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-5">
                 <div class="d-flex gap-3 flex-wrap mb-2">
                     <div class="form-check">
                         <input class="form-check-input" type="checkbox" id="new-can-create" name="can_create">
                         <label class="form-check-label" for="new-can-create">Create</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="new-can-edit" name="can_edit">
+                        <label class="form-check-label" for="new-can-edit">Edit</label>
                     </div>
                     <div class="form-check">
                         <input class="form-check-input" type="checkbox" id="new-can-delete" name="can_delete">
@@ -77,6 +81,9 @@
                             {% if user_item.can_create %}
                                 <span class="badge bg-success-subtle text-success border border-success">Create</span>
                             {% endif %}
+                            {% if user_item.can_edit %}
+                                <span class="badge bg-primary-subtle text-primary border border-primary">Edit</span>
+                            {% endif %}
                             {% if user_item.can_delete %}
                                 <span class="badge bg-danger-subtle text-danger border border-danger">Archive</span>
                             {% endif %}
@@ -124,6 +131,11 @@
                                                 <div class="form-check form-switch mb-2">
                                                     <input class="form-check-input" type="checkbox" id="can_create{{ user_item.id }}" name="can_create" {% if user_item.can_create %}checked{% endif %}>
                                                     <label class="form-check-label fw-semibold" for="can_create{{ user_item.id }}">Can Create / Ingest Records</label>
+                                                </div>
+
+                                                <div class="form-check form-switch mb-2">
+                                                    <input class="form-check-input" type="checkbox" id="can_edit{{ user_item.id }}" name="can_edit" {% if user_item.can_edit %}checked{% endif %}>
+                                                    <label class="form-check-label fw-semibold" for="can_edit{{ user_item.id }}">Can Edit</label>
                                                 </div>
 
                                                 <div class="form-check form-switch mb-2">
@@ -191,5 +203,78 @@
             </tbody>
         </table>
     </div>
+</div>
+
+<div class="card border-0 shadow-sm p-4 mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="fw-bold mb-0">Record Edit & Archive Audit History</h5>
+        <span class="badge bg-light text-dark border">{{ audit_logs.total }} entries</span>
+    </div>
+
+    <form method="get" action="{{ url_for('admin') }}" class="row g-2 align-items-end mb-3">
+        <div class="col-sm-4 col-lg-3">
+            <label for="audit-action" class="form-label">Action</label>
+            <select class="form-select" id="audit-action" name="action">
+                <option value="" {% if not audit_action %}selected{% endif %}>All actions</option>
+                <option value="CREATE" {% if audit_action == 'CREATE' %}selected{% endif %}>Created</option>
+                <option value="EDIT" {% if audit_action == 'EDIT' %}selected{% endif %}>Edited</option>
+                <option value="ARCHIVE" {% if audit_action == 'ARCHIVE' %}selected{% endif %}>Archived</option>
+            </select>
+        </div>
+        <div class="col-sm-6 col-lg-5">
+            <label for="audit-search" class="form-label">Search</label>
+            <input class="form-control" type="search" id="audit-search" name="search"
+                   value="{{ audit_search }}" placeholder="Username, record ID, or field">
+        </div>
+        <div class="col-sm-2 col-lg-4 d-flex gap-2">
+            <button type="submit" class="btn btn-primary">Filter</button>
+            <a class="btn btn-outline-secondary" href="{{ url_for('admin') }}">Clear</a>
+        </div>
+    </form>
+
+    <div class="table-responsive">
+        <table class="table table-hover align-middle small mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Timestamp</th>
+                    <th>Username</th>
+                    <th>Record ID</th>
+                    <th>Action Type</th>
+                    <th>Field Changed</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in audit_logs.items %}
+                <tr>
+                    <td>{{ log.timestamp.strftime('%Y-%m-%d %H:%M:%S') if log.timestamp else '—' }}</td>
+                    <td>{{ log.username or '—' }}</td>
+                    <td>{{ log.record_id or '—' }}</td>
+                    <td><span class="badge bg-secondary">{{ {'CREATE': 'Created', 'EDIT': 'Edited', 'ARCHIVE': 'Archived'}.get(log.action_type, log.action_type or '—') }}</span></td>
+                    <td>{{ log.field_changed or '—' }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="5" class="text-center text-muted py-4">No audit entries match these filters.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if audit_logs.pages > 1 %}
+    <nav class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-3" aria-label="Audit history pagination">
+        <span class="text-muted small">Page {{ audit_logs.page }} of {{ audit_logs.pages }}</span>
+        <div class="btn-group" role="group">
+            {% if audit_logs.has_prev %}
+            <a class="btn btn-sm btn-outline-secondary"
+               href="{{ url_for('admin', page=audit_logs.prev_num, action=audit_action, search=audit_search) }}">Previous</a>
+            {% endif %}
+            {% if audit_logs.has_next %}
+            <a class="btn btn-sm btn-outline-secondary"
+               href="{{ url_for('admin', page=audit_logs.next_num, action=audit_action, search=audit_search) }}">Next</a>
+            {% endif %}
+        </div>
+    </nav>
+    {% endif %}
 </div>
 {% endblock %}

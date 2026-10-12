@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="mb-4">
+    <h2 class="fw-bold mb-1">Archive Hub</h2>
+    <p class="text-muted mb-0">Search and review archived surveillance records, or export archived data by year.</p>
+</div>
+
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+            <div>
+                <h5 class="fw-bold mb-1">Download archived dataset</h5>
+                <p class="text-muted small mb-0">
+                    {% if year == 'all' %}Export all archived years.{% else %}Export archived records for {{ year }}.{% endif %}
+                </p>
+            </div>
+            <div class="d-flex gap-2 flex-wrap">
+                <a class="btn btn-outline-dark {% if not has_archived_data %}disabled{% endif %}"
+                   href="{{ url_for('download_archived_cases_csv', year=year if year != 'all' else none) }}"
+                   {% if not has_archived_data %}aria-disabled="true" tabindex="-1"{% endif %}>CSV</a>
+                <a class="btn btn-outline-dark {% if not has_archived_data %}disabled{% endif %}"
+                   href="{{ url_for('download_archived_cases_excel', year=year if year != 'all' else none) }}"
+                   {% if not has_archived_data %}aria-disabled="true" tabindex="-1"{% endif %}>Excel (.xlsx)</a>
+            </div>
+        </div>
+        <div class="d-flex flex-wrap gap-2 mb-3">
+            {% for year_option in available_years %}
+                {% if year_option == 'all' %}
+                    {% set label = 'All' %}
+                    {% set year_value = 'all' %}
+                {% else %}
+                    {% set label = year_option %}
+                    {% set year_value = year_option %}
+                {% endif %}
+                <a href="{{ url_for('archive', year=year_value, search=search, district=filters.district, barangay=filters.barangay, morbidity_month=filters.morbidity_month, morbidity_week=filters.morbidity_week, case_classification=filters.case_classification, clinical_classification=filters.clinical_classification, page=1) }}"
+                   class="btn btn-sm {% if year == year_value %}btn-primary{% else %}btn-outline-secondary{% endif %}">
+                    {{ label }}
+                </a>
+            {% endfor %}
+        </div>
+
+        <form method="get" action="{{ url_for('archive') }}" class="row g-2 align-items-end">
+            <div class="col-md-4">
+                <label for="archive-search" class="form-label small">Search</label>
+                <input type="hidden" name="year" value="{{ year }}">
+                <input id="archive-search" type="text" name="search" class="form-control" placeholder="Case ID or barangay" value="{{ search }}">
+            </div>
+            <div class="col-md-4">
+                <label for="archive-district" class="form-label small">District</label>
+                <select id="archive-district" name="district" class="form-select">
+                    <option value="">All districts</option>
+                    {% for district_option in districts %}
+                    <option value="{{ district_option }}" {% if filters.district == district_option %}selected{% endif %}>{{ district_option }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label for="archive-barangay" class="form-label small">Barangay</label>
+                <input id="archive-barangay" type="text" name="barangay" class="form-control" value="{{ filters.barangay }}" placeholder="Any barangay">
+            </div>
+            <div class="col-md-3">
+                <label for="archive-month" class="form-label small">Morbidity month</label>
+                <select id="archive-month" name="morbidity_month" class="form-select">
+                    <option value="">All months</option>
+                    {% for month in months %}
+                    <option value="{{ month }}" {% if filters.morbidity_month == month|string %}selected{% endif %}>{{ month }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label for="archive-week" class="form-label small">Morbidity week</label>
+                <select id="archive-week" name="morbidity_week" class="form-select">
+                    <option value="">All weeks</option>
+                    {% for week in weeks %}
+                    <option value="{{ week }}" {% if filters.morbidity_week == week|string %}selected{% endif %}>{{ week }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label for="archive-case-classification" class="form-label small">Case classification</label>
+                <select id="archive-case-classification" name="case_classification" class="form-select">
+                    <option value="">All classifications</option>
+                    <option value="Confirmed" {% if filters.case_classification == 'Confirmed' %}selected{% endif %}>Confirmed</option>
+                    <option value="Suspected" {% if filters.case_classification == 'Suspected' %}selected{% endif %}>Suspected</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label for="archive-clinical-classification" class="form-label small">Clinical classification</label>
+                <select id="archive-clinical-classification" name="clinical_classification" class="form-select">
+                    <option value="">All classifications</option>
+                    <option value="Severe" {% if filters.clinical_classification == 'Severe' %}selected{% endif %}>Severe</option>
+                    <option value="Non-severe" {% if filters.clinical_classification == 'Non-severe' %}selected{% endif %}>Non-severe</option>
+                </select>
+            </div>
+            <div class="col-12 d-flex gap-2">
+                <button type="submit" class="btn btn-dark">Apply filters</button>
+                <a class="btn btn-outline-secondary" href="{{ url_for('archive') }}">Clear filters</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm">
+    <div class="table-responsive">
+        <table class="table table-striped table-hover align-middle mb-0">
+            <thead class="table-dark">
+                <tr>
+                    <th>Case ID</th>
+                    <th>Year</th>
+                    <th>Week</th>
+                    <th>Month</th>
+                    <th>District</th>
+                    <th>Barangay</th>
+                    <th>Age</th>
+                    <th>Sex</th>
+                    <th>Clinical</th>
+                    <th>Case Type</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for record in records.items %}
+                <tr>
+                    <td>{{ record.case_id }}</td>
+                    <td>{{ record.year if record.year is not none else 'N/A' }}</td>
+                    <td>{{ record.morbidity_week if record.morbidity_week is not none else 'N/A' }}</td>
+                    <td>{{ record.morbidity_month if record.morbidity_month is not none else 'N/A' }}</td>
+                    <td>{{ record.district }}</td>
+                    <td>{{ record.barangay }}</td>
+                    <td>{{ record.age if record.age is not none and record.age != 0 else 'Unavailable' }}</td>
+                    <td>{{ record.sex }}</td>
+                    <td>{{ record.clinical_classification or 'N/A' }}</td>
+                    <td>{{ record.case_classification or 'N/A' }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="10" class="text-center text-muted py-4">No archived records match the selected filters.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<nav aria-label="Archive records pagination" class="mt-4 d-flex justify-content-center">
+    <ul class="pagination pagination-sm mb-0">
+        {% if records.has_prev %}
+        <li class="page-item">
+            <a class="page-link" href="{{ url_for('archive', year=year, search=search, district=filters.district, barangay=filters.barangay, morbidity_month=filters.morbidity_month, morbidity_week=filters.morbidity_week, case_classification=filters.case_classification, clinical_classification=filters.clinical_classification, page=records.prev_num) }}">&lt; Previous</a>
+        </li>
+        {% else %}
+        <li class="page-item disabled"><span class="page-link">&lt; Previous</span></li>
+        {% endif %}
+
+        <li class="page-item disabled">
+            <span class="page-link">Page {{ records.page }} of {{ records.pages }}</span>
+        </li>
+
+        {% if records.has_next %}
+        <li class="page-item">
+            <a class="page-link" href="{{ url_for('archive', year=year, search=search, district=filters.district, barangay=filters.barangay, morbidity_month=filters.morbidity_month, morbidity_week=filters.morbidity_week, case_classification=filters.case_classification, clinical_classification=filters.clinical_classification, page=records.next_num) }}">Next &gt;</a>
+        </li>
+        {% else %}
+        <li class="page-item disabled"><span class="page-link">Next &gt;</span></li>
+        {% endif %}
+    </ul>
+</nav>
+{% endblock %}

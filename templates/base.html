@@ -5,32 +5,219 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LokalHealth - Epidemiological Surveillance</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        :root {
+            font-size: clamp(16px, calc(15px + 0.2vw), 18px);
+        }
+
+        body {
+            min-width: 320px;
+            font-size: 1rem;
+            line-height: 1.5;
+        }
+
+        h1, h2, h3, h4, h5, h6 {
+            line-height: 1.25;
+        }
+
+        h1 { font-size: clamp(1.75rem, 1.45rem + 0.8vw, 2.35rem); }
+        h2 { font-size: clamp(1.5rem, 1.3rem + 0.55vw, 2rem); }
+        h3 { font-size: clamp(1.3rem, 1.15rem + 0.4vw, 1.65rem); }
+        h4 { font-size: clamp(1.15rem, 1.05rem + 0.25vw, 1.4rem); }
+        h5 { font-size: clamp(1.05rem, 1rem + 0.15vw, 1.2rem); }
+
+        .app-container {
+            width: 100%;
+            max-width: 1800px;
+            margin-inline: auto;
+            padding-inline: clamp(1rem, 2.5vw, 2.5rem);
+        }
+
+        .app-navbar {
+            padding-block: 0.65rem;
+        }
+
+        .app-navbar .navbar-brand {
+            font-size: 1.25rem;
+        }
+
+        .app-navbar .nav-link {
+            padding-inline: 0.7rem;
+            font-size: 0.95rem;
+        }
+
+        .app-user {
+            white-space: nowrap;
+        }
+
+        .app-main {
+            min-width: 0;
+            padding-bottom: 2rem;
+        }
+
+        .small, small {
+            font-size: max(0.875em, 0.875rem);
+        }
+
+        .form-label,
+        .form-check-label {
+            font-size: 0.925rem;
+        }
+
+        .form-control,
+        .form-select {
+            min-height: 2.65rem;
+            font-size: 1rem;
+        }
+
+        .btn {
+            min-height: 2.5rem;
+            font-size: 0.95rem;
+        }
+
+        .btn-sm,
+        .btn-group-sm > .btn {
+            min-height: 2.25rem;
+            font-size: 0.875rem;
+        }
+
+        .card.p-3 {
+            padding: clamp(0.85rem, 1.5vw, 1.25rem) !important;
+        }
+
+        .card.p-4 {
+            padding: clamp(1rem, 2vw, 1.5rem) !important;
+        }
+
+        .table {
+            font-size: 0.925rem;
+        }
+
+        .table-responsive {
+            max-width: 100%;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        @media (min-width: 1600px) {
+            .app-container {
+                max-width: 1920px;
+            }
+
+            .app-main {
+                padding-top: 0.25rem;
+            }
+        }
+
+        @media (max-width: 991.98px) {
+            .app-navbar .navbar-collapse {
+                padding-top: 0.75rem;
+            }
+
+            .app-navbar .navbar-nav {
+                gap: 0.15rem;
+            }
+
+            .app-navbar .nav-link {
+                padding: 0.55rem 0.75rem;
+                border-radius: 0.4rem;
+            }
+
+            .app-navbar .nav-link:hover,
+            .app-navbar .nav-link:focus {
+                background: rgba(255, 255, 255, 0.1);
+            }
+        }
+
+        @media (max-width: 767.98px) {
+            .app-container {
+                padding-inline: 0.875rem;
+            }
+
+            .app-main {
+                padding-bottom: 1.25rem;
+            }
+
+            .app-main > .d-flex.justify-content-between,
+            .app-main .row > .d-flex.justify-content-between {
+                flex-wrap: wrap;
+                align-items: flex-start !important;
+                gap: 0.75rem;
+            }
+
+            .app-main .table-responsive {
+                margin-inline: 0;
+            }
+
+            .app-main table {
+                min-width: 42rem;
+            }
+
+            .modal-dialog {
+                margin: 0.5rem;
+            }
+
+            .modal-content {
+                max-height: calc(100dvh - 1rem);
+                overflow-y: auto;
+            }
+        }
+
+        @media (max-width: 575.98px) {
+            .app-user {
+                white-space: normal;
+            }
+
+            .app-user small {
+                overflow-wrap: anywhere;
+            }
+
+            .app-main .btn-group {
+                flex-wrap: wrap;
+            }
+
+            .app-main .alert-banner-content {
+                flex-wrap: wrap;
+                gap: 1rem;
+            }
+
+            .app-main .alert-right-content {
+                width: 100%;
+                text-align: left !important;
+            }
+        }
+    </style>
 </head>
 <body class="bg-light">
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
-        <div class="container">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4 app-navbar">
+        <div class="app-container d-flex flex-wrap">
             <a class="navbar-brand fw-bold" href="#">LokalHealth</a>
             {% if current_user.is_authenticated %}
-            <div class="d-flex align-items-center text-white me-auto">
-                <span class="badge bg-secondary me-2">{{ current_user.role }}</span>
-                <small>{{ current_user.username }}</small>
-            </div>
-            <div class="navbar-nav">
-                <a class="nav-link" href="{{ url_for('dashboard') }}">Dashboard</a>
-                <a class="nav-link" href="{{ url_for('records') }}">Records</a>
-                <a class="nav-link" href="{{ url_for('repository') }}">Repository</a>
-                <a class="nav-link" href="{{ url_for('reports') }}">Reports</a>
-                <a class="nav-link" href="{{ url_for('evaluation') }}">Evaluation</a>
-                {% if current_user.role == 'Admin' %}
-                <a class="nav-link" href="{{ url_for('admin') }}">Admin</a>
-                {% endif %}
-                <a class="nav-link text-danger ms-3" href="{{ url_for('logout') }}">Logout</a>
+            <button class="navbar-toggler ms-auto" type="button" data-bs-toggle="collapse" data-bs-target="#primaryNavigation" aria-controls="primaryNavigation" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="primaryNavigation">
+                <div class="d-flex align-items-center text-white app-user me-lg-3 py-2 py-lg-0">
+                    <span class="badge bg-secondary me-2">{{ current_user.role }}</span>
+                    <small>{{ current_user.username }}</small>
+                </div>
+                <div class="navbar-nav ms-lg-auto">
+                    <a class="nav-link" href="{{ url_for('dashboard') }}">Dashboard</a>
+                    <a class="nav-link" href="{{ url_for('records') }}">Records</a>
+                    <a class="nav-link" href="{{ url_for('repository') }}">Repository</a>
+                    <a class="nav-link" href="{{ url_for('archive') }}">Archive Hub</a>
+                    <a class="nav-link" href="{{ url_for('reports') }}">Reports</a>
+                    <a class="nav-link" href="{{ url_for('evaluation') }}">Evaluation</a>
+                    {% if current_user.role == 'Admin' %}
+                    <a class="nav-link" href="{{ url_for('admin') }}">Admin</a>
+                    {% endif %}
+                    <a class="nav-link text-danger" href="{{ url_for('logout') }}">Logout</a>
+                </div>
             </div>
             {% endif %}
         </div>
     </nav>
 
-    <div class="container">
+    <main class="app-container app-main">
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
                 {% for category, message in messages %}
@@ -43,7 +230,7 @@
         {% endwith %}
 
         {% block content %}{% endblock %}
-    </div>
+    </main>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>

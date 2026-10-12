@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-start gap-3 mb-4">
+    <div>
+        <h2 class="fw-bold mb-1">Edit case record</h2>
+        <p class="text-muted mb-0">Case ID: {{ record.case_id }} &middot; Year: {{ record.year }}</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('repository', year=record.year) }}">Back to repository</a>
+</div>
+
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-4">
+        <form method="post" action="{{ url_for('edit_record', record_id=record.id) }}">
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label" for="morbidity_month">Morbidity month</label>
+                    <select class="form-select" id="morbidity_month" name="morbidity_month" required>
+                        {% for month in range(1, 13) %}
+                        <option value="{{ month }}" {% if record.morbidity_month == month %}selected{% endif %}>{{ month }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="morbidity_week">Morbidity week</label>
+                    <select class="form-select" id="morbidity_week" name="morbidity_week">
+                        <option value="">Not specified</option>
+                        {% for week in range(1, 53) %}
+                        <option value="{{ week }}" {% if record.morbidity_week == week %}selected{% endif %}>{{ week }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="district">District</label>
+                    <input class="form-control" id="district" name="district" maxlength="100" value="{{ record.district }}" required>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="barangay">Barangay</label>
+                    <input class="form-control" id="barangay" name="barangay" maxlength="100" value="{{ record.barangay }}" required>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="age">Age</label>
+                    <input class="form-control" type="number" id="age" name="age" min="0" value="{{ record.age }}" required>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="sex">Sex</label>
+                    <input class="form-control" id="sex" name="sex" maxlength="10" value="{{ record.sex }}" required>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="clinical_classification">Clinical classification</label>
+                    <input class="form-control" id="clinical_classification" name="clinical_classification" maxlength="100" value="{{ record.clinical_classification or '' }}" required>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="case_classification">Case classification</label>
+                    <input class="form-control" id="case_classification" name="case_classification" maxlength="100" value="{{ record.case_classification or '' }}" required>
+                </div>
+            </div>
+            <div class="d-flex justify-content-end gap-2 mt-4">
+                <a class="btn btn-light" href="{{ url_for('repository', year=record.year) }}">Cancel</a>
+                <button class="btn btn-primary" type="submit">Save changes</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

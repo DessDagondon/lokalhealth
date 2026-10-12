@@ -33,6 +33,37 @@ class AssignedBarangayMigrationTest(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_dengue_archive_and_audit_migration_is_idempotent(self):
+        from app import DengueRecord, RecordAuditLog, migrate_dengue_record_table
+        from sqlalchemy import text
+
+        with app.app_context():
+            db.drop_all()
+            with db.engine.begin() as connection:
+                connection.execute(
+                    text('CREATE TABLE dengue_record (id INTEGER PRIMARY KEY, year INTEGER)')
+                )
+
+            migrate_dengue_record_table()
+            migrate_dengue_record_table()
+
+            columns = {
+                column['name']: column
+                for column in db.inspect(db.engine).get_columns('dengue_record')
+            }
+            self.assertIn('is_archived', columns)
+            self.assertTrue(columns['is_archived']['nullable'] is False)
+            self.assertTrue(db.inspect(db.engine).has_table('record_audit_log'))
+
+            with db.engine.begin() as connection:
+                connection.execute(text('INSERT INTO dengue_record (year) VALUES (2025)'))
+                archived_value = connection.execute(
+                    text('SELECT is_archived FROM dengue_record WHERE year = 2025')
+                ).scalar_one()
+            self.assertFalse(bool(archived_value))
+            self.assertEqual(RecordAuditLog.__tablename__, 'record_audit_log')
+            self.assertIn('is_archived', DengueRecord.__table__.columns)
+
 
 class UploadHeaderCompatibilityTest(unittest.TestCase):
     def test_upload_accepts_common_header_variants(self):

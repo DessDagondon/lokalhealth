@@ -4,7 +4,7 @@ import secrets
 from io import BytesIO, StringIO
 from datetime import date, datetime, timedelta
 import sys
-from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify
+from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify, abort
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 import pandas as pd
@@ -13,8 +13,9 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
-from sqlalchemy import event, text, or_
+from sqlalchemy import case, event, text, or_
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import SQLAlchemyError
 from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
 from utils import log_memory_usage
@@ -125,6 +126,18 @@ class DengueRecord(db.Model):
     clinical_classification = db.Column(db.String(100), nullable=True)
     case_classification = db.Column(db.String(100), nullable=True)
     sync_status = db.Column(db.String(20), default='Synced')  # 'Manual/Local' or 'Synced'
+    is_archived = db.Column(db.Boolean, default=False, server_default=db.false(), nullable=False)
+
+
+class RecordAuditLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    record_id = db.Column(db.Integer, nullable=False, index=True)
+    username = db.Column(db.String(80), nullable=False)
+    action_type = db.Column(db.String(20), nullable=False)
+    field_changed = db.Column(db.String(100), nullable=False)
+    old_value = db.Column(db.Text, nullable=True)
+    new_value = db.Column(db.Text, nullable=True)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
 def ensure_primary_admin_account():
     try:
@@ -293,7 +306,10 @@ def get_dashboard_years():
     return [
         int(year)
         for year, in db.session.query(DengueRecord.year)
-        .filter(DengueRecord.year.isnot(None))
+        .filter(
+            DengueRecord.year.isnot(None),
+            DengueRecord.is_archived.is_(False),
+        )
         .distinct()
         .order_by(DengueRecord.year.asc())
         .all()
@@ -360,6 +376,7 @@ def get_dashboard_trend(current_year=None):
     ).filter(
         DengueRecord.year.in_(relevant_years),
         DengueRecord.morbidity_week.between(1, 52),
+        DengueRecord.is_archived.is_(False),
     ).distinct().all()
     reported_weeks_by_year = {}
     for year, week in reported_week_rows:
@@ -377,6 +394,7 @@ def get_dashboard_trend(current_year=None):
     ).filter(
         DengueRecord.year.in_(weekly_years),
         DengueRecord.morbidity_week.between(1, 52),
+        DengueRecord.is_archived.is_(False),
         DengueRecord.case_classification.ilike('%confirmed%')
     ).group_by(DengueRecord.year, DengueRecord.morbidity_week).all()
 
@@ -404,6 +422,7 @@ def get_dashboard_trend(current_year=None):
         DengueRecord.year.in_(relevant_years),
         DengueRecord.morbidity_month.isnot(None),
         DengueRecord.morbidity_month.between(1, 12),
+        DengueRecord.is_archived.is_(False),
         DengueRecord.case_classification.ilike('%confirmed%'),
     ).group_by(DengueRecord.year, DengueRecord.morbidity_month).all()
     counts_by_year_month = {
@@ -494,6 +513,7 @@ def dashboard_forecast_api():
         DengueRecord.year == current_year,
         DengueRecord.morbidity_week.isnot(None),
         DengueRecord.morbidity_week.between(1, 52),
+        DengueRecord.is_archived.is_(False),
         DengueRecord.case_classification.ilike('%confirmed%')
     ).group_by(DengueRecord.morbidity_week).order_by(DengueRecord.morbidity_week).all()
 
@@ -679,7 +699,10 @@ def dashboard():
     available_years = get_dashboard_years()
     selected_year = requested_year if requested_year in available_years else (available_years[-1] if available_years else datetime.now().year)
 
-    records_list = DengueRecord.query.filter(DengueRecord.year == selected_year).all()
+    records_list = DengueRecord.query.filter(
+        DengueRecord.year == selected_year,
+        DengueRecord.is_archived.is_(False),
+    ).all()
     confirmed_records = [
         record for record in records_list
         if is_available_dashboard_value(record.case_classification)
@@ -858,7 +881,7 @@ def coalesce_text(value, fallback='Unavailable'):
 
 def get_yearly_data_availability(records=None):
     if records is None:
-        records = DengueRecord.query.all()
+        records = DengueRecord.query.filter(DengueRecord.is_archived.is_(False)).all()
 
     def normalize_value(value):
         if value is None:
@@ -930,7 +953,10 @@ def get_available_report_years():
     return [
         int(year_row[0])
         for year_row in db.session.query(DengueRecord.year)
-        .filter(DengueRecord.year.isnot(None))
+        .filter(
+            DengueRecord.year.isnot(None),
+            DengueRecord.is_archived.is_(False),
+        )
         .distinct()
         .order_by(DengueRecord.year.asc())
         .all()
@@ -939,7 +965,10 @@ def get_available_report_years():
 
 def get_report_summary_for_year(year_value):
     year = int(year_value) if year_value is not None else None
-    records_list = DengueRecord.query.filter(DengueRecord.year == year).all() if year is not None else DengueRecord.query.all()
+    query = DengueRecord.query.filter(DengueRecord.is_archived.is_(False))
+    if year is not None:
+        query = query.filter(DengueRecord.year == year)
+    records_list = query.all()
     total_records = len(records_list)
     month_counts = {}
     for record in records_list:
@@ -1267,6 +1296,15 @@ def records():
                     sync_status='Local'
                 )
                 db.session.add(record)
+                db.session.flush()
+                db.session.add(RecordAuditLog(
+                    record_id=record.id,
+                    username=current_user.username,
+                    action_type='CREATE',
+                    field_changed='record',
+                    old_value=None,
+                    new_value=record.case_id,
+                ))
                 db.session.commit()
                 flash('Dengue case saved successfully as a new manually logged record.', 'success')
                 page = 1
@@ -1294,6 +1332,7 @@ def records():
 
                         # Loop through rows and insert into database
                         added_count = 0
+                        imported_records = []
                         for _, row in df.iterrows():
                             if row.isnull().all():
                                 continue
@@ -1323,9 +1362,22 @@ def records():
                                 sync_status='Synced'
                             )
                             db.session.add(record)
+                            imported_records.append(record)
                             existing_case_ids.add(candidate_case_id)
                             added_count += 1
 
+                        db.session.flush()
+                        db.session.add_all([
+                            RecordAuditLog(
+                                record_id=record.id,
+                                username=current_user.username,
+                                action_type='CREATE',
+                                field_changed='record',
+                                old_value=None,
+                                new_value=record.case_id,
+                            )
+                            for record in imported_records
+                        ])
                         db.session.commit()
                         flash(f'Successfully imported {added_count} new records from {filename}!', 'info')
                         page = 1
@@ -1339,66 +1391,393 @@ def records():
     return render_template('records.html', user=current_user, records=records_page)
 
 # Screen 4: View all ingested dengue surveillance data
-@app.route('/repository')
-@login_required
-def repository():
-    year_filter = request.args.get('year', 'all', type=str)
-    search = request.args.get('search', '', type=str).strip()
-    page = request.args.get('page', 1, type=int)
-    page = max(page, 1)
+REPOSITORY_FILTER_DEFAULTS = {
+    'year': 'all',
+    'search': '',
+    'district': '',
+    'barangay': '',
+    'morbidity_month': '',
+    'morbidity_week': '',
+    'case_classification': '',
+    'clinical_classification': '',
+}
 
+
+def get_repository_filters(source):
+    filters = {
+        key: str(source.get(key, default) or default).strip()
+        for key, default in REPOSITORY_FILTER_DEFAULTS.items()
+    }
+    if filters['year'].lower() != 'all':
+        try:
+            filters['year'] = str(int(filters['year']))
+        except ValueError:
+            filters['year'] = 'all'
+
+    for key, minimum, maximum in (
+        ('morbidity_month', 1, 12),
+        ('morbidity_week', 1, 52),
+    ):
+        try:
+            value = int(filters[key]) if filters[key] else None
+        except ValueError:
+            value = None
+        filters[key] = str(value) if value is not None and minimum <= value <= maximum else ''
+
+    if filters['case_classification'].lower() not in {'confirmed', 'suspected'}:
+        filters['case_classification'] = ''
+    if filters['clinical_classification'].lower() not in {'severe', 'non-severe'}:
+        filters['clinical_classification'] = ''
+    return filters
+
+
+def apply_repository_filters(query, filters):
+    if filters['year'] != 'all':
+        query = query.filter(DengueRecord.year == int(filters['year']))
+    if filters['search']:
+        search_term = f"%{filters['search']}%"
+        query = query.filter(or_(
+            DengueRecord.case_id.ilike(search_term),
+            DengueRecord.barangay.ilike(search_term),
+        ))
+    if filters['district']:
+        query = query.filter(DengueRecord.district == filters['district'])
+    if filters['barangay']:
+        query = query.filter(DengueRecord.barangay.ilike(f"%{filters['barangay']}%"))
+    if filters['morbidity_month']:
+        query = query.filter(DengueRecord.morbidity_month == int(filters['morbidity_month']))
+    if filters['morbidity_week']:
+        query = query.filter(DengueRecord.morbidity_week == int(filters['morbidity_week']))
+    if filters['case_classification']:
+        query = query.filter(DengueRecord.case_classification.ilike(
+            f"%{filters['case_classification']}%"
+        ))
+    if filters['clinical_classification'] == 'Severe':
+        query = query.filter(
+            DengueRecord.clinical_classification.ilike('%severe%'),
+            ~DengueRecord.clinical_classification.ilike('%non-severe%'),
+        )
+    elif filters['clinical_classification'] == 'Non-severe':
+        query = query.filter(
+            ~DengueRecord.clinical_classification.ilike('%severe%')
+            | DengueRecord.clinical_classification.is_(None)
+        )
+    return query
+
+
+def get_repository_filter_options():
     available_years = [
         int(year_row[0])
         for year_row in db.session.query(DengueRecord.year)
-        .filter(DengueRecord.year.isnot(None))
+        .filter(
+            DengueRecord.is_archived.is_(False),
+            DengueRecord.year.isnot(None),
+        )
         .distinct()
         .order_by(DengueRecord.year.asc())
         .all()
     ]
-    if not available_years:
-        available_years = [datetime.now().year]
-
-    normalized_year_filter = 'all'
-    if year_filter and str(year_filter).lower() != 'all':
-        try:
-            normalized_year_filter = str(int(year_filter))
-        except (TypeError, ValueError):
-            normalized_year_filter = 'all'
-
-    if normalized_year_filter != 'all' and int(normalized_year_filter) not in available_years:
-        available_years.append(int(normalized_year_filter))
-        available_years = sorted(set(available_years))
-
-    year_options = ['all'] + [str(year) for year in sorted(set(available_years), reverse=True)]
-
-    query = DengueRecord.query.order_by(DengueRecord.id.desc())
-
-    if normalized_year_filter and normalized_year_filter != 'all':
-        try:
-            query = query.filter(DengueRecord.year == int(normalized_year_filter))
-        except ValueError:
-            pass
-
-    if search:
-        filter_term = f'%{search}%'
-        query = query.filter(
-            or_(
-                DengueRecord.case_id.ilike(filter_term),
-                DengueRecord.barangay.ilike(filter_term),
-            )
+    districts = [
+        district[0]
+        for district in db.session.query(DengueRecord.district)
+        .filter(
+            DengueRecord.is_archived.is_(False),
+            DengueRecord.district.isnot(None),
+            DengueRecord.district != '',
         )
+        .distinct()
+        .order_by(DengueRecord.district.asc())
+        .all()
+    ]
+    return available_years, districts
 
-    records_page = query.paginate(page=page, per_page=50, error_out=False)
-    yearly_availability_summary = get_yearly_data_availability(DengueRecord.query.all())
+
+def repository_year_options(available_years):
+    return ['all'] + [
+        str(year) for year in sorted(set(available_years), reverse=True)
+    ]
+
+
+def get_yearly_archive_summary():
+    year_rows = db.session.query(
+        DengueRecord.year,
+        db.func.count(DengueRecord.id),
+        db.func.sum(case((DengueRecord.is_archived.is_(True), 1), else_=0)),
+    ).filter(
+        DengueRecord.year.isnot(None)
+    ).group_by(DengueRecord.year).order_by(DengueRecord.year.desc()).all()
+    return [
+        {
+            'year': int(year),
+            'record_count': int(record_count),
+            'archived_count': int(archived_count or 0),
+            'is_archived': int(archived_count or 0) == int(record_count),
+            'is_mixed': 0 < int(archived_count or 0) < int(record_count),
+            'active_count': int(record_count) - int(archived_count or 0),
+        }
+        for year, record_count, archived_count in year_rows
+        if int(record_count) - int(archived_count or 0) > 0
+    ]
+
+
+@app.route('/repository')
+@login_required
+def repository():
+    filters = get_repository_filters(request.args)
+    page = max(request.args.get('page', 1, type=int), 1)
+    available_years, districts = get_repository_filter_options()
+    if filters['year'] != 'all' and int(filters['year']) not in available_years:
+        filters['year'] = 'all'
+    query = apply_repository_filters(
+        DengueRecord.query.filter(DengueRecord.is_archived.is_(False)),
+        filters,
+    )
+    records_page = query.order_by(DengueRecord.id.desc()).paginate(
+        page=page, per_page=50, error_out=False
+    )
     return render_template(
         'data_repository.html',
         user=current_user,
         records=records_page,
-        year=normalized_year_filter,
-        search=search,
-        available_years=year_options,
-        yearly_availability_summary=yearly_availability_summary,
+        filters=filters,
+        year=filters['year'],
+        search=filters['search'],
+        available_years=repository_year_options(available_years),
+        districts=districts,
+        months=range(1, 13),
+        weeks=range(1, 53),
+        yearly_availability_summary=get_yearly_archive_summary(),
     )
+
+
+@app.route('/archive')
+@login_required
+def archive():
+    filters = get_repository_filters(request.args)
+    page = max(request.args.get('page', 1, type=int), 1)
+    available_years = [
+        int(year_row[0])
+        for year_row in db.session.query(DengueRecord.year)
+        .filter(DengueRecord.is_archived.is_(True), DengueRecord.year.isnot(None))
+        .distinct()
+        .order_by(DengueRecord.year.asc())
+        .all()
+    ]
+    districts = [
+        district[0]
+        for district in db.session.query(DengueRecord.district)
+        .filter(
+            DengueRecord.is_archived.is_(True),
+            DengueRecord.district.isnot(None),
+            DengueRecord.district != '',
+        )
+        .distinct()
+        .order_by(DengueRecord.district.asc())
+        .all()
+    ]
+    query = apply_repository_filters(
+        DengueRecord.query.filter(DengueRecord.is_archived.is_(True)),
+        filters,
+    )
+    archive_data_query = DengueRecord.query.filter(DengueRecord.is_archived.is_(True))
+    if filters['year'] != 'all':
+        archive_data_query = archive_data_query.filter(
+            DengueRecord.year == int(filters['year'])
+        )
+    records_page = query.order_by(DengueRecord.id.desc()).paginate(
+        page=page, per_page=50, error_out=False
+    )
+    return render_template(
+        'archive.html',
+        user=current_user,
+        records=records_page,
+        filters=filters,
+        year=filters['year'],
+        search=filters['search'],
+        available_years=repository_year_options(available_years),
+        districts=districts,
+        months=range(1, 13),
+        weeks=range(1, 53),
+        has_archived_data=archive_data_query.count() > 0,
+    )
+
+
+def get_archived_case_export_records(year):
+    query = DengueRecord.query.filter(DengueRecord.is_archived.is_(True))
+    if year is not None:
+        query = query.filter(DengueRecord.year == year)
+    return query.order_by(DengueRecord.id).all()
+
+
+def get_case_export_rows(records):
+    return [
+        {
+            'year': record.year,
+            'case_id': record.case_id,
+            'morbidity_month': record.morbidity_month,
+            'morbidity_week': record.morbidity_week,
+            'district': record.district,
+            'barangay': record.barangay,
+            'age': record.age,
+            'sex': record.sex,
+            'clinical_classification': record.clinical_classification,
+            'case_classification': record.case_classification,
+        }
+        for record in records
+    ]
+
+
+@app.route('/archive/cases.csv')
+@login_required
+def download_archived_cases_csv():
+    selected_year = request.args.get('year', type=int)
+    records = get_archived_case_export_records(selected_year)
+    csv_buffer = StringIO()
+    pd.DataFrame(get_case_export_rows(records)).to_csv(csv_buffer, index=False)
+    csv_file = BytesIO(csv_buffer.getvalue().encode('utf-8'))
+    csv_file.seek(0)
+    filename = (
+        f'lokalhealth-archived-case-data-{selected_year}.csv'
+        if selected_year is not None
+        else 'lokalhealth-archived-case-data-all-years.csv'
+    )
+    return send_file(csv_file, mimetype='text/csv', as_attachment=True, download_name=filename)
+
+
+@app.route('/archive/cases.xlsx')
+@login_required
+def download_archived_cases_excel():
+    selected_year = request.args.get('year', type=int)
+    records = get_archived_case_export_records(selected_year)
+    excel_buffer = BytesIO()
+    pd.DataFrame(get_case_export_rows(records)).to_excel(
+        excel_buffer, index=False, engine='openpyxl'
+    )
+    excel_buffer.seek(0)
+    filename = (
+        f'lokalhealth-archived-case-data-{selected_year}.xlsx'
+        if selected_year is not None
+        else 'lokalhealth-archived-case-data-all-years.xlsx'
+    )
+    return send_file(
+        excel_buffer,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=filename,
+    )
+
+
+@app.route('/repository/toggle-archive/<int:year>', methods=['POST'])
+@login_required
+def archive_year(year):
+    if current_user.role != 'Admin' and not current_user.can_delete:
+        flash('Access denied: Archive permission is required.', 'error')
+        return redirect(url_for('repository'))
+
+    year_records = DengueRecord.query.filter_by(year=year).all()
+    if not year_records:
+        flash(f'No records found for {year}.', 'error')
+        return redirect(url_for('repository'))
+
+    active_records = [record for record in year_records if not record.is_archived]
+    if not active_records:
+        flash(f'All {year} records are already archived.', 'info')
+        return redirect(url_for('repository', year=year))
+
+    for record in active_records:
+        previous_value = record.is_archived
+        record.is_archived = True
+        db.session.add(RecordAuditLog(
+            record_id=record.id,
+            username=current_user.username,
+            action_type='ARCHIVE',
+            field_changed='is_archived',
+            old_value=str(previous_value),
+            new_value='True',
+        ))
+    db.session.commit()
+    flash(f'All {year} records have been archived.', 'success')
+    filters = get_repository_filters(request.args)
+    filters['year'] = str(year)
+    return redirect(url_for('repository', **filters))
+
+
+@app.route('/records/edit/<int:record_id>', methods=['GET', 'POST'])
+@login_required
+def edit_record(record_id):
+    if current_user.role != 'Admin' and not current_user.can_edit:
+        flash('Access denied: Your account does not have permission to edit records.', 'error')
+        return redirect(url_for('repository'))
+
+    record = db.session.get(DengueRecord, record_id)
+    if record is None:
+        abort(404)
+    if record.is_archived and current_user.role != 'Admin':
+        flash('Archived records can only be edited by an administrator.', 'error')
+        return redirect(url_for('repository', year=record.year))
+
+    if request.method == 'POST':
+        try:
+            month = int(request.form.get('morbidity_month', ''))
+            if not 1 <= month <= 12:
+                raise ValueError('Morbidity month must be between 1 and 12.')
+            week_value = request.form.get('morbidity_week', '').strip()
+            week = int(week_value) if week_value else None
+            if week is not None and not 1 <= week <= 52:
+                raise ValueError('Morbidity week must be between 1 and 52.')
+            age = int(request.form.get('age', ''))
+            if age < 0:
+                raise ValueError('Age cannot be negative.')
+
+            updates = {
+                'morbidity_month': month,
+                'morbidity_week': week,
+                'district': request.form.get('district', '').strip(),
+                'barangay': request.form.get('barangay', '').strip(),
+                'age': age,
+                'sex': request.form.get('sex', '').strip(),
+                'clinical_classification': request.form.get('clinical_classification', '').strip(),
+                'case_classification': request.form.get('case_classification', '').strip(),
+            }
+            for field in ('district', 'barangay', 'sex', 'clinical_classification', 'case_classification'):
+                if not updates[field]:
+                    raise ValueError(f'{field.replace("_", " ").capitalize()} is required.')
+            if len(updates['district']) > 100 or len(updates['barangay']) > 100:
+                raise ValueError('District and barangay values must be 100 characters or fewer.')
+            if len(updates['sex']) > 10:
+                raise ValueError('Sex must be 10 characters or fewer.')
+            if len(updates['clinical_classification']) > 100 or len(updates['case_classification']) > 100:
+                raise ValueError('Classification values must be 100 characters or fewer.')
+
+            audit_entries = []
+            for field, new_value in updates.items():
+                old_value = getattr(record, field)
+                if old_value != new_value:
+                    audit_entries.append(RecordAuditLog(
+                        record_id=record.id,
+                        username=current_user.username,
+                        action_type='EDIT',
+                        field_changed=field,
+                        old_value=None if old_value is None else str(old_value),
+                        new_value=None if new_value is None else str(new_value),
+                    ))
+                    setattr(record, field, new_value)
+
+            if audit_entries:
+                db.session.add_all(audit_entries)
+            db.session.commit()
+            flash('Record updated successfully.', 'success')
+            return redirect(url_for('repository', year=record.year))
+        except (TypeError, ValueError) as error:
+            db.session.rollback()
+            flash(str(error), 'error')
+            record = db.session.get(DengueRecord, record_id)
+        except SQLAlchemyError:
+            db.session.rollback()
+            flash('Could not save the record changes. No updates were applied.', 'error')
+            record = db.session.get(DengueRecord, record_id)
+
+    return render_template('record_edit.html', user=current_user, record=record)
 
 # Screen 4: Automated PDF/CSV Export Hub
 @app.route('/reports')
@@ -1412,9 +1791,12 @@ def reports():
     if selected_year is not None and selected_year not in available_years:
         selected_year = None
 
-    yearly_availability_summary = get_yearly_data_availability(DengueRecord.query.all())
+    yearly_availability_summary = get_yearly_data_availability()
     summary_for_year = get_report_summary_for_year(selected_year) if selected_year is not None else None
-    year_records = DengueRecord.query.filter(DengueRecord.year == selected_year).order_by(DengueRecord.id.asc()).all() if selected_year is not None else []
+    year_records = DengueRecord.query.filter(
+        DengueRecord.year == selected_year,
+        DengueRecord.is_archived.is_(False),
+    ).order_by(DengueRecord.id.asc()).all() if selected_year is not None else []
     has_data = bool(summary_for_year and summary_for_year['total_records'] > 0)
 
     return render_template(
@@ -1434,14 +1816,20 @@ def download_summary_pdf():
     from reportlab.lib.pagesizes import letter
     from reportlab.pdfgen import canvas
 
-    selected_year = request.args.get('year', type=int)
+    requested_year = request.args.get('year', type=int)
     available_years = get_available_report_years()
+    selected_year = requested_year
     if selected_year is None:
         selected_year = max(available_years) if available_years else None
-    if selected_year not in available_years:
-        selected_year = None
 
-    records_list = DengueRecord.query.filter(DengueRecord.year == selected_year).order_by(DengueRecord.morbidity_month).all() if selected_year is not None else DengueRecord.query.order_by(DengueRecord.morbidity_month).all()
+    records_query = DengueRecord.query.filter(DengueRecord.is_archived.is_(False))
+    if selected_year is not None:
+        records_query = records_query.filter(DengueRecord.year == selected_year)
+    records_list = (
+        records_query.order_by(DengueRecord.morbidity_month).all()
+        if selected_year is None or selected_year in available_years
+        else []
+    )
     if not records_list:
         pdf_buffer = BytesIO()
         document = canvas.Canvas(pdf_buffer, pagesize=letter)
@@ -1530,7 +1918,9 @@ def download_summary_csv():
 @login_required
 def download_cases_csv():
     selected_year = request.args.get('year', type=int)
-    query = DengueRecord.query.order_by(DengueRecord.id)
+    query = DengueRecord.query.filter(
+        DengueRecord.is_archived.is_(False)
+    ).order_by(DengueRecord.id)
     if selected_year is not None:
         query = query.filter(DengueRecord.year == selected_year)
     records_list = query.all()
@@ -1559,7 +1949,9 @@ def download_cases_csv():
 @login_required
 def download_cases_excel():
     selected_year = request.args.get('year', type=int)
-    query = DengueRecord.query.order_by(DengueRecord.id)
+    query = DengueRecord.query.filter(
+        DengueRecord.is_archived.is_(False)
+    ).order_by(DengueRecord.id)
     if selected_year is not None:
         query = query.filter(DengueRecord.year == selected_year)
     records_list = query.all()
@@ -1686,7 +2078,37 @@ def admin():
         flash('Unauthorized access: Admin permissions required.', 'error')
         return redirect(url_for('dashboard'))
     users = User.query.all()
-    return render_template('admin.html', user=current_user, users=users)
+    action_filter = request.args.get('action', '').strip().upper()
+    if action_filter not in {'CREATE', 'EDIT', 'ARCHIVE'}:
+        action_filter = ''
+    audit_search = request.args.get('search', '').strip()
+    audit_query = RecordAuditLog.query
+    if action_filter:
+        audit_query = audit_query.filter(RecordAuditLog.action_type == action_filter)
+    if audit_search:
+        search_pattern = f'%{audit_search}%'
+        audit_query = audit_query.filter(db.or_(
+            RecordAuditLog.username.ilike(search_pattern),
+            RecordAuditLog.action_type.ilike(search_pattern),
+            RecordAuditLog.field_changed.ilike(search_pattern),
+            db.cast(RecordAuditLog.record_id, db.String).ilike(search_pattern),
+        ))
+    audit_logs = audit_query.order_by(
+        RecordAuditLog.timestamp.desc(),
+        RecordAuditLog.id.desc(),
+    ).paginate(
+        page=max(request.args.get('page', 1, type=int), 1),
+        per_page=15,
+        error_out=False,
+    )
+    return render_template(
+        'admin.html',
+        user=current_user,
+        users=users,
+        audit_logs=audit_logs,
+        audit_action=action_filter,
+        audit_search=audit_search,
+    )
 
 # ==========================================
 # DATABASE INITIALIZATION & SEEDING
@@ -1701,6 +2123,10 @@ def init_db():
         print("Database initialized and default Admin account ensured.")
 
 def migrate_dengue_record_table():
+    inspector = db.inspect(db.engine)
+    if not inspector.has_table('dengue_record'):
+        DengueRecord.__table__.create(db.engine, checkfirst=True)
+
     existing_columns = {
         column['name'] for column in db.inspect(db.engine).get_columns('dengue_record')
     }
@@ -1708,10 +2134,18 @@ def migrate_dengue_record_table():
     if 'year' not in existing_columns:
         with db.engine.begin() as connection:
             connection.execute(text('ALTER TABLE dengue_record ADD COLUMN year INTEGER'))
+        existing_columns.add('year')
+
+    if 'is_archived' not in existing_columns:
+        with db.engine.begin() as connection:
+            connection.execute(
+                text('ALTER TABLE dengue_record ADD COLUMN is_archived BOOLEAN NOT NULL DEFAULT 0')
+            )
 
     # Backfill year values from current year for legacy rows without explicit data.
     with db.engine.begin() as connection:
         connection.execute(text('UPDATE dengue_record SET year = :year WHERE year IS NULL'), {'year': datetime.now().year})
+    RecordAuditLog.__table__.create(db.engine, checkfirst=True)
 
 def migrate_user_table():
     existing_columns = {
