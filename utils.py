@@ -20,11 +20,11 @@ def measure_time(metric_name):
         @wraps(func)
         def wrapper(*args, **kwargs):
             start_time = time.perf_counter()
-            result = func(*args, **kwargs)
-            end_time = time.perf_counter()
-            duration_ms = (end_time - start_time) * 1000
-            print(f"[BENCHMARK] {metric_name} -> Execution Time: {duration_ms:.2f} ms")
-            return result
+            try:
+                return func(*args, **kwargs)
+            finally:
+                duration_ms = (time.perf_counter() - start_time) * 1000
+                print(f"[BENCHMARK] {metric_name} -> Execution Time: {duration_ms:.2f} ms")
         return wrapper
     return decorator
 
