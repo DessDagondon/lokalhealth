@@ -39,7 +39,7 @@ class DashboardWarningStateTest(unittest.TestCase):
                     case_number += 1
             db.session.commit()
 
-    def test_2024_dashboard_uses_prior_year_baseline(self):
+    def test_2024_dashboard_uses_prior_year_threshold(self):
         with app.test_client() as client:
             login = client.post(
                 '/login',
@@ -51,9 +51,8 @@ class DashboardWarningStateTest(unittest.TestCase):
             response = client.get('/dashboard?year=2024')
             body = response.get_data(as_text=True)
             self.assertEqual(response.status_code, 200)
-            self.assertIn('RED - Surge State', body)
-            self.assertIn('Threshold Breach &amp; Targeted Intervention', body)
-            self.assertIn('Historical 75th percentile', body)
+            self.assertIn('Early warning status for MW', body)
+            self.assertIn('Historical 75th percentile: 10.0', body)
 
             trend = client.get('/api/dashboard/trend?year=2024').get_json()
             current_week = min(datetime.now().isocalendar().week, 52) - 1
@@ -62,7 +61,7 @@ class DashboardWarningStateTest(unittest.TestCase):
             self.assertEqual(trend['pre_surge_threshold'], 7.5)
             self.assertEqual(trend['risk_level'], 'RED')
 
-    def test_2023_dashboard_shows_red_warning_after_old_data_is_removed(self):
+    def test_2023_dashboard_shows_baseline_unavailable_without_prior_years(self):
         with app.app_context():
             DengueRecord.query.delete()
             db.session.commit()
@@ -96,16 +95,15 @@ class DashboardWarningStateTest(unittest.TestCase):
             body = response.get_data(as_text=True)
             self.assertEqual(response.status_code, 200)
             self.assertIn('BLUE - Historical Baseline', body)
-            self.assertIn('30 reported cases | Baseline N/A', body)
-            self.assertIn('Insufficient prior historical data to establish a P75 epidemic threshold.', body)
+            self.assertIn('30 reported cases', body)
 
             trend = client.get('/api/dashboard/trend?year=2023').get_json()
             current_week = min(datetime.now().isocalendar().week, 52) - 1
             self.assertEqual(trend['actual'][current_week], 30)
-            self.assertEqual(trend['baseline_75th'][current_week], 0.0)
+            self.assertEqual(trend['baseline_75th'][current_week], 0)
             self.assertEqual(trend['risk_level'], 'BLUE')
 
-    def test_multi_year_dashboard_readings_and_warning_levels(self):
+    def test_multi_year_dashboard_readings_use_historical_thresholds(self):
         with app.app_context():
             DengueRecord.query.delete()
             showcase_week = min(datetime.now().isocalendar().week, 52)
@@ -151,8 +149,7 @@ class DashboardWarningStateTest(unittest.TestCase):
             self.assertIn('DEMOGRAPHICS', dashboard_body)
             self.assertIn('Male', dashboard_body)
             self.assertIn('Clinical classification', dashboard_body)
-            self.assertIn('Multi-Week Projection', dashboard_body)
-            self.assertIn('Model performance', dashboard_body)
+            self.assertIn('Historical 75th percentile:', dashboard_body)
 
             expected_levels = {
                 2023: 'BLUE',
@@ -167,7 +164,7 @@ class DashboardWarningStateTest(unittest.TestCase):
                 self.assertEqual(trend['risk_level'], expected_level)
 
             self.assertIn('10 reported cases', dashboard_body)
-            self.assertIn('GREEN - Normal State', dashboard_body)
+            self.assertIn('GREEN - Below Alert Threshold', dashboard_body)
 
     def test_forecast_api_returns_multiweek_projection_and_comparison_metrics(self):
         forecast_year = datetime.now().year
@@ -224,8 +221,19 @@ class DashboardWarningStateTest(unittest.TestCase):
         for metric in (
             'rmse_rf', 'mae_rf', 'rmse_naive', 'mae_naive',
             'rmse_lr', 'mae_lr', 'rmse_seasonal', 'mae_seasonal',
+            'mean_error_rf', 'mean_error_naive', 'mean_error_lr',
+            'mean_error_seasonal',
         ):
             self.assertIsNotNone(forecast[metric])
+        self.assertEqual(forecast['mean_error'], forecast['mean_error_naive'])
+        self.assertEqual(
+            [item['predicted_cases'] for item in forecast['forecasts']],
+            [forecast['current_cases']] * 4,
+        )
+        self.assertEqual(
+            [item['week'] for item in forecast['forecasts']],
+            list(range(forecast['current_week'] + 1, forecast['current_week'] + 5)),
+        )
 
         with app.test_client() as client:
             client.post(
@@ -234,6 +242,8 @@ class DashboardWarningStateTest(unittest.TestCase):
                 follow_redirects=False,
             )
             dashboard = client.get('/dashboard').get_data(as_text=True)
+        self.assertIn('Random Forest', dashboard)
+        self.assertIn('Naive Persistence', dashboard)
         self.assertIn('Severe 1', dashboard)
         self.assertIn('Suspected 1', dashboard)
         self.assertIn('Male 1', dashboard)

@@ -188,13 +188,24 @@
     </div>
     <div class="col-md-4">
         <div class="card border-0 shadow-sm p-4 h-100">
-            <h5 class="fw-bold mb-3">Intervention Priority Watchlist</h5>
+            <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap mb-3">
+                <h5 class="fw-bold mb-0">Intervention Priority Watchlist</h5>
+                <div class="d-flex align-items-center gap-2">
+                    <label for="watchlist-district" class="small text-muted mb-0">District</label>
+                    <select id="watchlist-district" class="form-select form-select-sm" aria-label="Filter intervention watchlist by district">
+                        <option value="">All districts</option>
+                        {% for district in district_options %}
+                        <option value="{{ district }}">{{ district }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
             <div class="list-group list-group-flush">
                 {% if not trend.weekly_data_available %}
                 <p class="text-muted mb-0">Weekly intervention priorities are unavailable because this year's records do not include morbidity weeks.</p>
                 {% else %}
-                {% for item in watchlist[(page - 1) * 10 : page * 10] %}
-                <div class="list-group-item d-flex justify-content-between align-items-center bg-transparent px-0 py-2">
+                {% for item in watchlist %}
+                <div class="list-group-item d-flex justify-content-between align-items-center bg-transparent px-0 py-2" data-watchlist-item data-district="{{ item.district }}">
                     <div class="me-2">
                         <div class="fw-semibold text-dark">{{ item.name }}</div>
                         <small class="text-muted">
@@ -207,39 +218,16 @@
                 <p class="text-muted mb-0">No intervention priorities identified</p>
                 {% endfor %}
                 {% endif %}
+                <p class="text-muted mb-0" data-watchlist-no-match hidden>No intervention priorities for this district.</p>
             </div>
 
-            {% if watchlist and total_pages > 1 %}
-            <nav aria-label="Intervention priority watchlist pagination" class="mt-3 dashboard-pagination">
-                <ul class="pagination pagination-sm justify-content-center flex-nowrap mb-0">
-                    {% if page > 1 %}
-                    <li class="page-item"><a class="page-link" href="{{ url_for('dashboard', page=page-1, year=selected_year) }}">Previous</a></li>
-                    {% endif %}
-
-                    {% if page > 3 %}
-                    <li class="page-item"><a class="page-link" href="{{ url_for('dashboard', page=1, year=selected_year) }}">1</a></li>
-                    <li class="page-item disabled"><span class="page-link">...</span></li>
-                    {% endif %}
-
-                    {% for page_num in range([1, page - 1]|max, [total_pages, page + 1]|min + 1) %}
-                        {% if page_num == page %}
-                        <li class="page-item active"><span class="page-link">{{ page_num }}</span></li>
-                        {% else %}
-                        <li class="page-item"><a class="page-link" href="{{ url_for('dashboard', page=page_num, year=selected_year) }}">{{ page_num }}</a></li>
-                        {% endif %}
-                    {% endfor %}
-
-                    {% if page < total_pages - 2 %}
-                    <li class="page-item disabled"><span class="page-link">...</span></li>
-                    <li class="page-item"><a class="page-link" href="{{ url_for('dashboard', page=total_pages, year=selected_year) }}">{{ total_pages }}</a></li>
-                    {% endif %}
-
-                    {% if page < total_pages %}
-                    <li class="page-item"><a class="page-link" href="{{ url_for('dashboard', page=page+1, year=selected_year) }}">Next</a></li>
-                    {% endif %}
-                </ul>
+            <nav id="watchlist-pagination" aria-label="Intervention priority watchlist pagination" class="mt-3" hidden>
+                <div class="d-flex justify-content-center align-items-center gap-3">
+                    <button type="button" class="btn btn-outline-primary btn-sm" id="watchlist-previous">Previous</button>
+                    <span class="small text-muted" id="watchlist-page-status" aria-live="polite"></span>
+                    <button type="button" class="btn btn-outline-primary btn-sm" id="watchlist-next">Next</button>
+                </div>
             </nav>
-            {% endif %}
         </div>
     </div>
 </div>
@@ -256,16 +244,15 @@
             <div class="modal-body">
                 <div class="table-responsive">
                     <table class="table table-sm align-middle mb-2">
-                        <thead><tr><th scope="col">Model</th><th scope="col" class="text-end">RMSE</th><th scope="col" class="text-end">MAE</th></tr></thead>
+                        <thead><tr><th scope="col">Model</th><th scope="col" class="text-end">RMSE</th><th scope="col" class="text-end">MAE</th><th scope="col" class="text-end">Mean Error</th></tr></thead>
                         <tbody>
-                            <tr><th scope="row">Random Forest</th><td id="metric-rmse-rf" class="text-end">—</td><td id="metric-mae-rf" class="text-end">—</td></tr>
-                            <tr><th scope="row">Naive</th><td id="metric-rmse-naive" class="text-end">—</td><td id="metric-mae-naive" class="text-end">—</td></tr>
-                            <tr><th scope="row">Linear Regression</th><td id="metric-rmse-lr" class="text-end">—</td><td id="metric-mae-lr" class="text-end">—</td></tr>
-                            <tr><th scope="row">Seasonal Median</th><td id="metric-rmse-seasonal" class="text-end">—</td><td id="metric-mae-seasonal" class="text-end">—</td></tr>
+                            <tr><th scope="row">Random Forest</th><td id="metric-rmse-rf" class="text-end">—</td><td id="metric-mae-rf" class="text-end">—</td><td id="metric-mean-error-rf" class="text-end">—</td></tr>
+                            <tr><th scope="row">Naive Persistence</th><td id="metric-rmse-naive" class="text-end">—</td><td id="metric-mae-naive" class="text-end">—</td><td id="metric-mean-error-naive" class="text-end">—</td></tr>
+                            <tr><th scope="row">Linear Regression</th><td id="metric-rmse-lr" class="text-end">—</td><td id="metric-mae-lr" class="text-end">—</td><td id="metric-mean-error-lr" class="text-end">—</td></tr>
+                            <tr><th scope="row">Seasonal Median</th><td id="metric-rmse-seasonal" class="text-end">—</td><td id="metric-mae-seasonal" class="text-end">—</td><td id="metric-mean-error-seasonal" class="text-end">—</td></tr>
                         </tbody>
                     </table>
                 </div>
-                <div class="small text-muted">Random Forest mean error: <span id="metric-mean-error">—</span> cases</div>
             </div>
         </div>
     </div>
@@ -353,7 +340,65 @@
     const actionRequired = document.getElementById('dashboard-action-required');
     const baseActionRequired = actionRequired ? actionRequired.textContent : '';
     let activePeriod = 'weekly';
-    let forecastRequestId = 0;
+    let cachedForecast = null;
+    let forecastLoadPromise = null;
+
+    const watchlistDistrict = document.getElementById('watchlist-district');
+    const watchlistItems = Array.from(document.querySelectorAll('[data-watchlist-item]'));
+    const watchlistPagination = document.getElementById('watchlist-pagination');
+    const watchlistPrevious = document.getElementById('watchlist-previous');
+    const watchlistNext = document.getElementById('watchlist-next');
+    const watchlistPageStatus = document.getElementById('watchlist-page-status');
+    const watchlistNoMatch = document.querySelector('[data-watchlist-no-match]');
+    const watchlistPageSize = 10;
+    let watchlistPage = 1;
+    const updateWatchlist = () => {
+        const district = watchlistDistrict ? watchlistDistrict.value : '';
+        const filteredItems = watchlistItems.filter(item =>
+            !district || item.dataset.district === district
+        );
+        const pageCount = Math.max(1, Math.ceil(filteredItems.length / watchlistPageSize));
+        watchlistPage = Math.min(watchlistPage, pageCount);
+        const pageStart = (watchlistPage - 1) * watchlistPageSize;
+        const visibleItems = new Set(filteredItems.slice(pageStart, pageStart + watchlistPageSize));
+        watchlistItems.forEach(item => {
+            item.hidden = !visibleItems.has(item);
+        });
+        if (watchlistNoMatch) {
+            watchlistNoMatch.hidden = filteredItems.length > 0 || watchlistItems.length === 0;
+        }
+        if (watchlistPagination) {
+            watchlistPagination.hidden = filteredItems.length <= watchlistPageSize;
+        }
+        if (watchlistPrevious) {
+            watchlistPrevious.disabled = watchlistPage <= 1;
+        }
+        if (watchlistNext) {
+            watchlistNext.disabled = watchlistPage >= pageCount;
+        }
+        if (watchlistPageStatus) {
+            watchlistPageStatus.textContent = `Page ${watchlistPage} of ${pageCount}`;
+        }
+    };
+    if (watchlistDistrict) {
+        watchlistDistrict.addEventListener('change', () => {
+            watchlistPage = 1;
+            updateWatchlist();
+        });
+    }
+    if (watchlistPrevious) {
+        watchlistPrevious.addEventListener('click', () => {
+            watchlistPage = Math.max(1, watchlistPage - 1);
+            updateWatchlist();
+        });
+    }
+    if (watchlistNext) {
+        watchlistNext.addEventListener('click', () => {
+            watchlistPage += 1;
+            updateWatchlist();
+        });
+    }
+    updateWatchlist();
 
     if (ctx) {
         const chart = new Chart(ctx, {
@@ -479,98 +524,112 @@
             }
         };
 
+        const renderForecast = (forecast, horizon) => {
+            if (!forecastCard || !forecastValue || !forecastDirection || !actionRequired) {
+                return;
+            }
+            const hasPrediction = forecast.predicted_cases !== null
+                && forecast.predicted_cases !== undefined
+                && forecast.predicted_cases !== '';
+            const predictedCases = hasPrediction ? Number(forecast.predicted_cases) : NaN;
+            const displayForecastCases = Number.isFinite(predictedCases)
+                ? Math.round(predictedCases)
+                : null;
+            const targetWeek = Number.isFinite(Number(forecast.target_week))
+                ? Number(forecast.target_week)
+                : null;
+            if (displayForecastCases === null || targetWeek === null) {
+                forecastValue.textContent = targetWeek === null
+                    ? 'Not enough weekly history'
+                    : `MW ${targetWeek}: Not enough weekly history`;
+                forecastDirection.textContent = '';
+                forecastDirection.className = 'badge d-none mt-1';
+                actionRequired.textContent = baseActionRequired;
+                return;
+            }
+
+            const availableForecasts = Array.isArray(forecast.forecasts) && forecast.forecasts.length
+                ? forecast.forecasts
+                : [{ week: targetWeek, predicted_cases: predictedCases, lower_bound: predictedCases, upper_bound: predictedCases }];
+            const forecasts = availableForecasts.slice(0, horizon);
+            const currentCases = Math.round(Number(forecast.current_cases));
+            const difference = Math.round(displayForecastCases - currentCases);
+            const displayDifference = Math.abs(difference);
+            let directionLabel;
+            let directionClass;
+            let trajectoryNote;
+            if (difference < 0) {
+                directionLabel = `▼ -${displayDifference} cases`;
+                directionClass = 'bg-success-subtle text-success-emphasis';
+                trajectoryNote = 'Forward projection indicates de-escalating case activity.';
+            } else if (difference > 0) {
+                directionLabel = `▲ +${displayDifference} cases`;
+                directionClass = 'bg-danger-subtle text-danger-emphasis';
+                trajectoryNote = 'Forward projection indicates accelerating case activity.';
+            } else {
+                directionLabel = '━ No change';
+                directionClass = 'bg-secondary-subtle text-secondary-emphasis';
+                trajectoryNote = 'Forward projection indicates stable case activity.';
+            }
+
+            if (forecasts.length > 1) {
+                const lastForecast = forecasts[forecasts.length - 1];
+                forecastValue.textContent = `MW ${targetWeek}–${lastForecast.week}: ${displayForecastCases} to ${Math.round(Number(lastForecast.predicted_cases))} cases`;
+            } else {
+                forecastValue.textContent = `MW ${targetWeek}: ${displayForecastCases} cases`;
+            }
+            forecastDirection.textContent = directionLabel;
+            forecastDirection.className = `badge ${directionClass} mt-1`;
+
+            setMetric('metric-rmse-rf', forecast.rmse_rf);
+            setMetric('metric-mae-rf', forecast.mae_rf);
+            setMetric('metric-rmse-naive', forecast.rmse_naive);
+            setMetric('metric-mae-naive', forecast.mae_naive);
+            setMetric('metric-rmse-lr', forecast.rmse_lr);
+            setMetric('metric-mae-lr', forecast.mae_lr);
+            setMetric('metric-rmse-seasonal', forecast.rmse_seasonal);
+            setMetric('metric-mae-seasonal', forecast.mae_seasonal);
+            setMetric('metric-mean-error-rf', forecast.mean_error_rf);
+            setMetric('metric-mean-error-naive', forecast.mean_error_naive ?? forecast.mean_error);
+            setMetric('metric-mean-error-lr', forecast.mean_error_lr);
+            setMetric('metric-mean-error-seasonal', forecast.mean_error_seasonal);
+
+            actionRequired.textContent = `${baseActionRequired} ${trajectoryNote}`;
+
+            forecastDataset.data = weeklyForecastData(forecasts, Number(forecast.current_week), currentCases, 'predicted_cases');
+            intervalLowerDataset.data = weeklyForecastData(forecasts, Number(forecast.current_week), currentCases, 'lower_bound');
+            intervalUpperDataset.data = weeklyForecastData(forecasts, Number(forecast.current_week), currentCases, 'upper_bound');
+            forecastDataset.label = forecasts.length > 1 ? 'Multi-Week Projection' : 'Next Week Projection';
+            forecastDataset.hidden = activePeriod !== 'weekly';
+            intervalLowerDataset.hidden = forecasts.length < 2 || activePeriod !== 'weekly';
+            intervalUpperDataset.hidden = forecasts.length < 2 || activePeriod !== 'weekly';
+            const intervalNote = document.getElementById('forecast-interval-note');
+            if (intervalNote) {
+                intervalNote.hidden = forecasts.length < 2 || activePeriod !== 'weekly';
+            }
+            chart.update();
+        };
+
         const loadForecast = (horizon = 1) => {
             if (!forecastCard || !forecastValue || !forecastDirection || !actionRequired) {
                 return;
             }
-            const requestId = ++forecastRequestId;
-            fetch(`/api/dashboard/forecast?year=${encodeURIComponent(forecastCard.dataset.year)}&week=${encodeURIComponent(trend.current_week)}&horizon=${encodeURIComponent(horizon)}`)
+            if (cachedForecast) {
+                renderForecast(cachedForecast, horizon);
+                return;
+            }
+            if (forecastLoadPromise) {
+                return;
+            }
+            forecastValue.textContent = 'Loading projection...';
+            forecastLoadPromise = fetch(`/api/dashboard/forecast?year=${encodeURIComponent(forecastCard.dataset.year)}&week=${encodeURIComponent(trend.current_week)}&horizon=4`)
                 .then(response => response.ok ? response.json() : Promise.reject(new Error('Forecast unavailable')))
                 .then(forecast => {
-                    if (requestId !== forecastRequestId) {
-                        return;
-                    }
-                    const hasPrediction = forecast.predicted_cases !== null
-                        && forecast.predicted_cases !== undefined
-                        && forecast.predicted_cases !== '';
-                    const predictedCases = hasPrediction ? Number(forecast.predicted_cases) : NaN;
-                    const displayForecastCases = Number.isFinite(predictedCases)
-                        ? Math.round(predictedCases)
-                        : null;
-                    const targetWeek = Number.isFinite(Number(forecast.target_week))
-                        ? Number(forecast.target_week)
-                        : null;
-                    if (displayForecastCases === null || targetWeek === null) {
-                        forecastValue.textContent = targetWeek === null
-                            ? 'Not enough weekly history'
-                            : `MW ${targetWeek}: Not enough weekly history`;
-                        forecastDirection.textContent = '';
-                        forecastDirection.className = 'badge d-none mt-1';
-                        actionRequired.textContent = baseActionRequired;
-                        return;
-                    }
-
-                    const forecasts = Array.isArray(forecast.forecasts) && forecast.forecasts.length
-                        ? forecast.forecasts
-                        : [{ week: targetWeek, predicted_cases: predictedCases, lower_bound: predictedCases, upper_bound: predictedCases }];
-                    const currentCases = Math.round(Number(forecast.current_cases));
-                    const difference = Math.round(displayForecastCases - currentCases);
-                    const displayDifference = Math.abs(difference);
-                    let directionLabel;
-                    let directionClass;
-                    let trajectoryNote;
-                    if (difference < 0) {
-                        directionLabel = `▼ -${displayDifference} cases`;
-                        directionClass = 'bg-success-subtle text-success-emphasis';
-                        trajectoryNote = 'Forward projection indicates de-escalating case activity.';
-                    } else if (difference > 0) {
-                        directionLabel = `▲ +${displayDifference} cases`;
-                        directionClass = 'bg-danger-subtle text-danger-emphasis';
-                        trajectoryNote = 'Forward projection indicates accelerating case activity.';
-                    } else {
-                        directionLabel = '━ No change';
-                        directionClass = 'bg-secondary-subtle text-secondary-emphasis';
-                        trajectoryNote = 'Forward projection indicates stable case activity.';
-                    }
-
-                    if (forecasts.length > 1) {
-                        const lastForecast = forecasts[forecasts.length - 1];
-                        forecastValue.textContent = `MW ${targetWeek}–${lastForecast.week}: ${displayForecastCases} to ${Math.round(Number(lastForecast.predicted_cases))} cases`;
-                    } else {
-                        forecastValue.textContent = `MW ${targetWeek}: ${displayForecastCases} cases`;
-                    }
-                    forecastDirection.textContent = directionLabel;
-                    forecastDirection.className = `badge ${directionClass} mt-1`;
-
-                    setMetric('metric-rmse-rf', forecast.rmse_rf);
-                    setMetric('metric-mae-rf', forecast.mae_rf);
-                    setMetric('metric-rmse-naive', forecast.rmse_naive);
-                    setMetric('metric-mae-naive', forecast.mae_naive);
-                    setMetric('metric-rmse-lr', forecast.rmse_lr);
-                    setMetric('metric-mae-lr', forecast.mae_lr);
-                    setMetric('metric-rmse-seasonal', forecast.rmse_seasonal);
-                    setMetric('metric-mae-seasonal', forecast.mae_seasonal);
-                    setMetric('metric-mean-error', forecast.mean_error);
-
-                    actionRequired.textContent = `${baseActionRequired} ${trajectoryNote}`;
-
-                    forecastDataset.data = weeklyForecastData(forecasts, Number(forecast.current_week), currentCases, 'predicted_cases');
-                    intervalLowerDataset.data = weeklyForecastData(forecasts, Number(forecast.current_week), currentCases, 'lower_bound');
-                    intervalUpperDataset.data = weeklyForecastData(forecasts, Number(forecast.current_week), currentCases, 'upper_bound');
-                    forecastDataset.label = forecasts.length > 1 ? 'Multi-Week Projection' : 'Next Week Projection';
-                    forecastDataset.hidden = activePeriod !== 'weekly';
-                    intervalLowerDataset.hidden = forecasts.length < 2 || activePeriod !== 'weekly';
-                    intervalUpperDataset.hidden = forecasts.length < 2 || activePeriod !== 'weekly';
-                    const intervalNote = document.getElementById('forecast-interval-note');
-                    if (intervalNote) {
-                        intervalNote.hidden = forecasts.length < 2 || activePeriod !== 'weekly';
-                    }
-                    chart.update();
+                    cachedForecast = forecast;
+                    const selectedHorizon = forecastHorizon ? Number(forecastHorizon.value) : horizon;
+                    renderForecast(forecast, selectedHorizon);
                 })
                 .catch(() => {
-                    if (requestId !== forecastRequestId) {
-                        return;
-                    }
                     forecastValue.textContent = 'Unavailable';
                     forecastDirection.textContent = '';
                     forecastDirection.className = 'badge d-none mt-1';
@@ -579,6 +638,9 @@
                     intervalLowerDataset.hidden = true;
                     intervalUpperDataset.hidden = true;
                     chart.update();
+                })
+                .finally(() => {
+                    forecastLoadPromise = null;
                 });
         };
 

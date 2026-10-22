@@ -12,9 +12,7 @@ from app import (
     app,
     build_standardized_upload_df,
     db,
-    evaluate_dashboard_alert,
     get_dashboard_trend,
-    get_intervention_priority,
     get_available_report_years,
     get_dashboard_years,
     get_report_summary_for_year,
@@ -79,6 +77,9 @@ class DashboardDataQualityTest(unittest.TestCase):
             add_cases(2025, 20, 2, 'Rising Barangay')
             add_cases(2025, 20, 1, 'Stable Barangay')
             add_cases(2025, 20, 1, 'Suspect Barangay', month=6, classification='Suspect')
+            add_cases(2023, 20, 5, 'Surge Barangay')
+            add_cases(2023, 20, 2, 'Rising Barangay')
+            add_cases(2023, 20, 2, 'Stable Barangay')
             db.session.add_all(records)
             db.session.commit()
 
@@ -97,25 +98,37 @@ class DashboardDataQualityTest(unittest.TestCase):
         self.assertEqual(result.loc[0, 'morbidity_month'], 7)
         self.assertTrue(pd.isna(result.loc[0, 'morbidity_week']))
 
-    def test_alert_names_match_levels_and_watchlist_colors(self):
-        self.assertEqual(evaluate_dashboard_alert(7, 10)['risk_level'], 'GREEN')
-        self.assertEqual(evaluate_dashboard_alert(8, 10)['risk_label'], 'Warning State')
-        self.assertEqual(evaluate_dashboard_alert(11, 10)['risk_label'], 'Surge State')
-        self.assertEqual(get_intervention_priority(1), ('STABLE', 'success'))
-        self.assertEqual(get_intervention_priority(2), ('RISING', 'warning'))
-        self.assertEqual(get_intervention_priority(5), ('SURGE', 'danger'))
-
     def test_historical_warning_uses_latest_week_and_confirmed_counts(self):
         with app.app_context():
             trend = get_dashboard_trend(2025)
 
         self.assertEqual(trend['current_week'], 20)
         self.assertEqual(trend['current_count'], 8)
-        self.assertEqual(trend['baseline_75th'][19], 1.0)
-        self.assertEqual(trend['risk_level'], 'RED')
-        self.assertEqual(trend['risk_label'], 'Surge State')
+        self.assertEqual(trend['baseline_75th'][19], 10)
+        self.assertEqual(trend['risk_level'], 'YELLOW')
 
-    def test_week_missing_year_is_unavailable_not_a_zero_case_warning(self):
+    def test_suspected_only_week_is_zero_and_unrecorded_future_week_is_none(self):
+        with app.app_context():
+            db.session.add(DengueRecord(
+                case_id='SUSPECTED-ONLY-WEEK',
+                year=2025,
+                morbidity_month=5,
+                morbidity_week=21,
+                district='Talomo',
+                barangay='Suspected-only Barangay',
+                age=24,
+                sex='F',
+                clinical_classification='Dengue without Warning Signs',
+                case_classification='Suspected',
+                sync_status='Synced',
+            ))
+            db.session.commit()
+            trend = get_dashboard_trend(2025)
+
+        self.assertEqual(trend['actual'][20], 0)
+        self.assertIsNone(trend['actual'][21])
+
+    def test_week_missing_year_is_unavailable(self):
         with app.app_context():
             trend = get_dashboard_trend(2024)
 
@@ -125,7 +138,7 @@ class DashboardDataQualityTest(unittest.TestCase):
         self.assertEqual(trend['risk_label'], 'Weekly Data Unavailable')
         self.assertEqual(trend['monthly_actual'][6], 1)
 
-    def test_dashboard_shows_matching_intervention_names_and_colors(self):
+    def test_dashboard_shows_warning_threshold_and_watchlist(self):
         with app.app_context():
             user_id = User.query.filter_by(username='qualitytester').first().id
 
@@ -135,20 +148,65 @@ class DashboardDataQualityTest(unittest.TestCase):
                 session['_fresh'] = True
 
             response = client.get('/dashboard?year=2025')
+            no_baseline = client.get('/dashboard?year=2023').get_data(as_text=True)
             unavailable = client.get('/dashboard?year=2024').get_data(as_text=True)
 
         body = response.get_data(as_text=True)
         self.assertEqual(response.status_code, 200)
-        self.assertIn('RED - Surge State', body)
-        self.assertIn('alert alert-danger', body)
-        self.assertIn('bg-danger">SURGE</span>', body)
-        self.assertIn('bg-warning">RISING</span>', body)
-        self.assertIn('bg-success">STABLE</span>', body)
+        self.assertIn('Historical 75th percentile:', body)
+        self.assertIn('ACTIVE CLUSTERS', body)
+        self.assertIn('BLUE - Historical Baseline', no_baseline)
+        self.assertIn('Weekly Data Unavailable', unavailable)
 
-        self.assertIn('Weekly case count unavailable', unavailable)
-        self.assertIn('alert alert-info', unavailable)
-        self.assertIn('Weekly intervention priorities are unavailable', unavailable)
-        self.assertNotIn('STABLE</span>', unavailable)
+    def test_watchlist_district_filter_is_independent_of_dashboard_metrics(self):
+        with app.app_context():
+            current_week = get_dashboard_trend(2025)['current_week']
+            db.session.add(DengueRecord(
+                case_id='QUALITY-NORTH-1',
+                year=2025,
+                morbidity_month=3,
+                morbidity_week=current_week,
+                district='North District',
+                barangay='North Barangay',
+                age=24,
+                sex='F',
+                clinical_classification='Dengue without Warning Signs',
+                case_classification='Confirmed',
+                sync_status='Synced',
+            ))
+            db.session.add(DengueRecord(
+                case_id='QUALITY-NORTH-BASELINE',
+                year=2023,
+                morbidity_month=3,
+                morbidity_week=current_week,
+                district='North District',
+                barangay='North Barangay',
+                age=24,
+                sex='F',
+                clinical_classification='Dengue without Warning Signs',
+                case_classification='Confirmed',
+                sync_status='Synced',
+            ))
+            db.session.commit()
+            user_id = User.query.filter_by(username='qualitytester').first().id
+
+        with app.test_client() as client:
+            with client.session_transaction() as session:
+                session['_user_id'] = str(user_id)
+                session['_fresh'] = True
+            all_districts = client.get('/dashboard?year=2025').get_data(as_text=True)
+            filtered = client.get(
+                '/dashboard?year=2025&district=North+District'
+            ).get_data(as_text=True)
+
+        self.assertIn('North Barangay', all_districts)
+        self.assertIn('North Barangay', filtered)
+        self.assertIn('Surge Barangay', filtered)
+        self.assertIn('id="watchlist-district"', filtered)
+        self.assertNotIn('id="watchlist-district" name=', filtered)
+        self.assertIn("watchlistDistrict.addEventListener('change'", filtered)
+        self.assertIn('TOTAL CONFIRMED CASES: 14', all_districts)
+        self.assertIn('TOTAL CONFIRMED CASES: 14', filtered)
 
     def test_archived_records_are_excluded_from_dashboard_reports_and_exports(self):
         with app.app_context():

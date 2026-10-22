@@ -12,7 +12,6 @@ import numpy as np
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, mean_absolute_error
-from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
 from sqlalchemy import case, event, text, or_
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
@@ -329,39 +328,40 @@ def evaluate_dashboard_alert(current_count, baseline_threshold):
     if current_count == 0 and baseline_threshold == 0:
         return {
             'risk_level': 'GREEN',
-            'risk_label': 'No Data / Normal State',
-            'recommendation': 'No baseline cases are available for comparison.',
+            'risk_label': 'Below Alert Threshold',
+            'recommendation': 'No baseline cases available for comparison.',
             'action_required': 'Action Required: Continue routine monitoring while awaiting reported case data.',
         }
     if current_count < pre_surge_threshold:
         return {
             'risk_level': 'GREEN',
-            'risk_label': 'Normal State',
+            'risk_label': 'Below Alert Threshold',
             'recommendation': 'Routine Monitoring',
             'action_required': 'Action Required: Continue routine monitoring and community prevention activities.',
         }
     if current_count <= baseline_threshold:
         return {
             'risk_level': 'YELLOW',
-            'risk_label': 'Warning State',
-            'recommendation': 'Pre-surge Advisory',
-            'action_required': 'Action Required: Issue a pre-surge advisory and increase local surveillance.',
+            'risk_label': 'Alert Threshold',
+            'recommendation': 'Early Warning / Pre-surge Advisory',
+            'action_required': 'Action Required: Issue an early-warning pre-surge advisory and increase local surveillance.',
         }
     return {
         'risk_level': 'RED',
-        'risk_label': 'Surge State',
-        'recommendation': 'Threshold Breach & Targeted Intervention',
-        'action_required': 'Action Required: Initiate targeted vector control and localized response.',
+        'risk_label': 'Epidemic Threshold',
+        'recommendation': 'Threshold Breach & Targeted Response',
+        'action_required': 'Action Required: Initiate targeted vector control and active outbreak response.',
     }
 
-
-def get_intervention_priority(active_cases):
-    if active_cases >= 5:
-        return 'SURGE', 'danger'
-    if active_cases >= 2:
-        return 'RISING', 'warning'
-    return 'STABLE', 'success'
-
+def get_intervention_priority(active_cases, baseline_threshold):
+    if baseline_threshold is None:
+        return 'BASELINE UNAVAILABLE', 'info'
+    alert = evaluate_dashboard_alert(active_cases, baseline_threshold)
+    return alert['risk_label'].upper(), {
+        'GREEN': 'success',
+        'YELLOW': 'warning',
+        'RED': 'danger',
+    }[alert['risk_level']]
 
 def get_dashboard_trend(current_year=None):
     current_year = current_year or datetime.now().year
@@ -373,13 +373,14 @@ def get_dashboard_trend(current_year=None):
     reported_week_rows = db.session.query(
         DengueRecord.year,
         DengueRecord.morbidity_week,
+        db.func.count(DengueRecord.id),
     ).filter(
         DengueRecord.year.in_(relevant_years),
         DengueRecord.morbidity_week.between(1, 52),
         DengueRecord.is_archived.is_(False),
-    ).distinct().all()
+    ).group_by(DengueRecord.year, DengueRecord.morbidity_week).all()
     reported_weeks_by_year = {}
-    for year, week in reported_week_rows:
+    for year, week, record_count in reported_week_rows:
         if year is not None and week is not None:
             reported_weeks_by_year.setdefault(int(year), set()).add(int(week))
 
@@ -403,17 +404,39 @@ def get_dashboard_trend(current_year=None):
         for year, week, count in grouped_counts
         if year is not None and week is not None
     }
-    current_actual = [counts_by_year_week.get((current_year, week), 0) for week in range(1, 53)]
+    current_reported_weeks = reported_weeks_by_year.get(current_year, set())
     current_week_data_available = current_year in reported_weeks_by_year
+    # Stop the actuals line after the latest week present in the data.
+    max_reported_week = max(current_reported_weeks) if current_reported_weeks else 52
+    current_actual = [
+        counts_by_year_week.get((current_year, week), 0)
+        if week <= max_reported_week else None
+        for week in range(1, 53)
+    ]
     if not current_week_data_available:
         current_actual = [None] * 52
     historical_values = [
-        [counts_by_year_week.get((year, week), 0) for year in weekly_baseline_years]
+        [
+            counts_by_year_week.get((year, week), 0)
+            for year in weekly_baseline_years
+        ]
         for week in range(1, 53)
     ]
     median = [calculate_quantile(values, 0.5) for values in historical_values]
     percentile_75 = [calculate_quantile(values, 0.75) for values in historical_values]
 
+    reported_month_rows = db.session.query(
+        DengueRecord.year,
+        DengueRecord.morbidity_month,
+    ).filter(
+        DengueRecord.year.in_(relevant_years),
+        DengueRecord.morbidity_month.between(1, 12),
+        DengueRecord.is_archived.is_(False),
+    ).distinct().all()
+    reported_months_by_year = {}
+    for year, month in reported_month_rows:
+        if year is not None and month is not None:
+            reported_months_by_year.setdefault(int(year), set()).add(int(month))
     grouped_month_counts = db.session.query(
         DengueRecord.year,
         DengueRecord.morbidity_month,
@@ -430,13 +453,24 @@ def get_dashboard_trend(current_year=None):
         for year, month, count in grouped_month_counts
         if year is not None and month is not None
     }
-    monthly_actual = [counts_by_year_month.get((current_year, month), 0) for month in range(1, 13)]
+    current_reported_months = reported_months_by_year.get(current_year, set())
+    monthly_actual = [
+        counts_by_year_month.get((current_year, month), 0)
+        for month in range(1, 13)
+    ]
+    if not current_reported_months:
+        monthly_actual = [None] * 12
     monthly_baseline_values = [
-        [counts_by_year_month.get((year, month), 0) for year in baseline_years]
+        [
+            counts_by_year_month.get((year, month), 0)
+            for year in baseline_years
+        ]
         for month in range(1, 13)
     ]
     monthly_median = [calculate_quantile(values, 0.5) for values in monthly_baseline_values]
-    monthly_percentile_75 = [calculate_quantile(values, 0.75) for values in monthly_baseline_values]
+    monthly_percentile_75 = [
+        calculate_quantile(values, 0.75) for values in monthly_baseline_values
+    ]
 
     active_year = datetime.now().year
     if current_year == active_year:
@@ -449,8 +483,7 @@ def get_dashboard_trend(current_year=None):
     current_count = current_actual[current_index]
     current_median = median[current_index]
     current_threshold = percentile_75[current_index]
-    has_baseline_data = bool(weekly_baseline_years)
-    if not has_baseline_data:
+    if not weekly_baseline_years:
         alert = {
             'risk_level': 'BLUE',
             'risk_label': 'Historical Baseline',
@@ -482,7 +515,7 @@ def get_dashboard_trend(current_year=None):
         'current_count': current_count,
         'current_median': current_median,
         'current_threshold': current_threshold,
-        'has_baseline_data': has_baseline_data,
+        'has_baseline_data': current_threshold is not None,
         'weekly_data_available': current_week_data_available,
         'pre_surge_threshold': round(0.75 * current_threshold, 2),
         **alert,
@@ -501,10 +534,36 @@ def dashboard_forecast_api():
     current_year = requested_year or datetime.now().year
     trend = get_dashboard_trend(current_year)
     requested_week = request.args.get('week', type=int)
-    current_week = requested_week if requested_week and 1 <= requested_week <= 52 else trend['current_week']
+    current_week = (
+        requested_week if requested_week and 1 <= requested_week <= 52
+        else trend['current_week']
+    )
     horizon = request.args.get('horizon', default=1, type=int)
     horizon = max(1, min(horizon, 8))
-    target_week = current_week + 1
+    target_week = current_week + 1 if current_week is not None else None
+
+    if current_week is None:
+        return jsonify({
+            'current_week': None,
+            'target_week': None,
+            'current_cases': None,
+            'predicted_cases': None,
+            'diff': None,
+            'rmse_rf': None,
+            'mae_rf': None,
+            'mean_error_rf': None,
+            'rmse_naive': None,
+            'mae_naive': None,
+            'mean_error_naive': None,
+            'rmse_lr': None,
+            'mae_lr': None,
+            'mean_error_lr': None,
+            'rmse_seasonal': None,
+            'mae_seasonal': None,
+            'mean_error_seasonal': None,
+            'mean_error': None,
+            'forecasts': [],
+        })
 
     grouped_counts = db.session.query(
         DengueRecord.morbidity_week,
@@ -526,12 +585,16 @@ def dashboard_forecast_api():
             'diff': None,
             'rmse_rf': None,
             'mae_rf': None,
+            'mean_error_rf': None,
             'rmse_naive': None,
             'mae_naive': None,
+            'mean_error_naive': None,
             'rmse_lr': None,
             'mae_lr': None,
+            'mean_error_lr': None,
             'rmse_seasonal': None,
             'mae_seasonal': None,
+            'mean_error_seasonal': None,
             'mean_error': None,
             'forecasts': [],
         })
@@ -546,12 +609,16 @@ def dashboard_forecast_api():
             'diff': None,
             'rmse_rf': None,
             'mae_rf': None,
+            'mean_error_rf': None,
             'rmse_naive': None,
             'mae_naive': None,
+            'mean_error_naive': None,
             'rmse_lr': None,
             'mae_lr': None,
+            'mean_error_lr': None,
             'rmse_seasonal': None,
             'mae_seasonal': None,
+            'mean_error_seasonal': None,
             'mean_error': None,
             'forecasts': [],
         })
@@ -573,12 +640,16 @@ def dashboard_forecast_api():
             'diff': None,
             'rmse_rf': None,
             'mae_rf': None,
+            'mean_error_rf': None,
             'rmse_naive': None,
             'mae_naive': None,
+            'mean_error_naive': None,
             'rmse_lr': None,
             'mae_lr': None,
+            'mean_error_lr': None,
             'rmse_seasonal': None,
             'mae_seasonal': None,
+            'mean_error_seasonal': None,
             'mean_error': None,
             'forecasts': [],
         })
@@ -587,53 +658,20 @@ def dashboard_forecast_api():
     X = training_data[['lag_1', 'lag_2', 'morbidity_week']].dropna()
     y = training_data.loc[X.index, 'case_count']
 
-    # Hyperparameter Grid Configuration
-    param_grid = {
-        'n_estimators': [50, 100, 200],
-        'max_depth': [None, 10, 20, 30]
-    }
+    # Keep Random Forest as a performance comparator; forecasts use Naive Persistence below.
+    rf_model = RandomForestRegressor(n_estimators=100, random_state=42)
+    rf_model.fit(X, y)
+    y_pred_rf = rf_model.predict(X)
+    rmse_rf = round(float(np.sqrt(mean_squared_error(y, y_pred_rf))), 2)
+    mae_rf = round(float(mean_absolute_error(y, y_pred_rf)), 2)
+    mean_error_rf = round(float(np.mean(y_pred_rf - y)), 2)
 
-    # Walk-Forward Validation Strategy using TimeSeriesSplit
-    n_splits = min(3, len(training_data) - 1)
-    if n_splits < 2:
-        # Fallback for small sample sizes
-        model = RandomForestRegressor(
-            criterion='squared_error',
-            n_estimators=100,
-            min_samples_split=2,
-            min_samples_leaf=1,
-            random_state=42
-        )
-        model.fit(X, y)
-    else:
-        tscv = TimeSeriesSplit(n_splits=n_splits)
-        rf = RandomForestRegressor(
-            criterion='squared_error',
-            min_samples_split=2,
-            min_samples_leaf=1,
-            random_state=42
-        )
-        grid_search = GridSearchCV(
-            estimator=rf,
-            param_grid=param_grid,
-            cv=tscv,
-            scoring='neg_mean_squared_error',
-            n_jobs=1
-        )
-        grid_search.fit(X, y)
-        model = grid_search.best_estimator_
-
-    # In-sample metrics calculation for performance validation
-    y_pred_in = model.predict(X)
-    rmse_rf = round(float(np.sqrt(mean_squared_error(y, y_pred_in))), 2)
-    mae_rf = round(float(mean_absolute_error(y, y_pred_in)), 2)
-    mean_error = round(float(np.mean(y_pred_in - y)), 2)
-    
-    # 2. Naive baseline: forecast equals the previous period's value (lag_1)
+    # Naive persistence: forecast each week using the previous week's observed count.
     y_naive = X['lag_1']
     y_actual_naive = y.loc[y_naive.index]
     rmse_naive = round(float(np.sqrt(mean_squared_error(y_actual_naive, y_naive))), 2)
     mae_naive = round(float(mean_absolute_error(y_actual_naive, y_naive)), 2)
+    mean_error_naive = round(float(np.mean(y_naive - y_actual_naive)), 2)
 
     # 3. Linear Regression Baseline 
     lr_model = LinearRegression()
@@ -641,6 +679,7 @@ def dashboard_forecast_api():
     y_pred_lr = lr_model.predict(X)
     rmse_lr = round(float(np.sqrt(mean_squared_error(y, y_pred_lr))), 2)
     mae_lr = round(float(mean_absolute_error(y, y_pred_lr)), 2)
+    mean_error_lr = round(float(np.mean(y_pred_lr - y)), 2)
 
     # 4. Historical Seasonal Median Baseline 
     historical_medians = trend['median'] # from get_dashboard_trend()
@@ -650,25 +689,19 @@ def dashboard_forecast_api():
     )
     rmse_seasonal = round(float(np.sqrt(mean_squared_error(y, y_seasonal_baseline))), 2)
     mae_seasonal = round(float(mean_absolute_error(y, y_seasonal_baseline)), 2)
+    mean_error_seasonal = round(float(np.mean(y_seasonal_baseline - y)), 2)
 
-    forecast_history = weekly_counts['case_count'].astype(float).tolist()
+    forecast_value = float(weekly_counts['case_count'].iloc[-1])
     forecasts = []
     for step in range(1, horizon + 1):
         forecast_week = current_week + step
-        forecast_value = model.predict(pd.DataFrame([{
-            'lag_1': forecast_history[-1],
-            'lag_2': forecast_history[-2],
-            'morbidity_week': forecast_week,
-        }]))[0]
-        forecast_value = max(0, float(forecast_value))
-        uncertainty = 1.96 * rmse_rf * np.sqrt(step)
+        uncertainty = 1.96 * rmse_naive * np.sqrt(step)
         forecasts.append({
             'week': forecast_week,
             'predicted_cases': round(forecast_value, 2),
             'lower_bound': round(max(0, forecast_value - uncertainty), 2),
             'upper_bound': round(forecast_value + uncertainty, 2),
         })
-        forecast_history.append(forecast_value)
 
     predicted_cases = forecasts[0]['predicted_cases']
 
@@ -680,13 +713,17 @@ def dashboard_forecast_api():
         'diff': round(predicted_cases - latest_cases, 2),
         'rmse_rf': rmse_rf,
         'mae_rf': mae_rf,
+        'mean_error_rf': mean_error_rf,
         'rmse_naive': rmse_naive,
         'mae_naive': mae_naive,
+        'mean_error_naive': mean_error_naive,
         'rmse_lr': rmse_lr,
         'mae_lr': mae_lr,
+        'mean_error_lr': mean_error_lr,
         'rmse_seasonal': rmse_seasonal,
         'mae_seasonal': mae_seasonal,
-        'mean_error': mean_error,
+        'mean_error_seasonal': mean_error_seasonal,
+        'mean_error': mean_error_naive,
         'forecasts': forecasts,
     })
 
@@ -709,46 +746,88 @@ def dashboard():
         and 'confirmed' in str(record.case_classification).lower()
     ]
     confirmed_cases = len(confirmed_records)
-    
+    district_options = sorted({
+        str(record.district).strip()
+        for record in records_list
+        if is_available_dashboard_value(record.district)
+    })
     # Calculate trend and active morbidity week
     trend = get_dashboard_trend(selected_year)
     active_week = trend['current_week']
 
-    # 1. Calculate cumulative YTD and active week cases per barangay
+    # Keep the watchlist focused on confirmed cases in the latest recorded week.
     barangay_counts = {}
-    active_week_counts = {}
+    watchlist_locations = {}
     for record in confirmed_records:
         if is_available_dashboard_value(record.barangay):
             barangay = str(record.barangay).strip()
             barangay_counts[barangay] = barangay_counts.get(barangay, 0) + 1
-            
+            district = (
+                str(record.district).strip()
+                if is_available_dashboard_value(record.district) else ''
+            )
+            location = watchlist_locations.setdefault(
+                (district, barangay),
+                {'active_cases': 0, 'total_ytd': 0},
+            )
+            location['total_ytd'] += 1
             try:
                 rec_week = int(record.morbidity_week) if record.morbidity_week else None
-                if rec_week == active_week:
-                    active_week_counts[barangay] = active_week_counts.get(barangay, 0) + 1
             except (ValueError, TypeError):
-                continue
+                rec_week = None
+            if rec_week == active_week:
+                location['active_cases'] += 1
+
+    historical_watchlist_rows = []
+    if active_week is not None:
+        historical_watchlist_rows = db.session.query(
+            DengueRecord.year,
+            DengueRecord.district,
+            DengueRecord.barangay,
+            db.func.count(DengueRecord.id),
+        ).filter(
+            DengueRecord.year < selected_year,
+            DengueRecord.morbidity_week == active_week,
+            DengueRecord.is_archived.is_(False),
+            DengueRecord.case_classification.ilike('%confirmed%'),
+            DengueRecord.barangay.isnot(None),
+        ).group_by(
+            DengueRecord.year,
+            DengueRecord.district,
+            DengueRecord.barangay,
+        ).all()
+    historical_watchlist_counts = {}
+    for year, district, barangay, count in historical_watchlist_rows:
+        key = (
+            str(district).strip() if is_available_dashboard_value(district) else '',
+            str(barangay).strip(),
+        )
+        historical_watchlist_counts.setdefault(key, []).append(int(count))
 
     clusters = sorted(barangay_counts)
-
-    # 2. Build Intervention Priority Watchlist using active week metrics
     watchlist = []
-    for barangay in clusters if trend['weekly_data_available'] else ():
-        active_cases = active_week_counts.get(barangay, 0)
-        total_ytd = barangay_counts.get(barangay, 0)
-
-        status, status_color = get_intervention_priority(active_cases)
-
+    for (district, barangay), counts in watchlist_locations.items():
+        historical_counts = historical_watchlist_counts.get((district, barangay), [])
+        threshold = (
+            float(pd.Series(historical_counts, dtype='float64').quantile(0.75))
+            if historical_counts else None
+        )
+        status, status_color = get_intervention_priority(
+            counts['active_cases'],
+            threshold,
+        )
         watchlist.append({
             'name': barangay,
-            'active_cases': active_cases,
-            'total_ytd': total_ytd,
+            'district': district,
+            'active_cases': counts['active_cases'],
+            'total_ytd': counts['total_ytd'],
             'status': status,
-            'status_color': status_color
+            'status_color': status_color,
         })
-
-    # Sort watchlist: Active Week Cases (descending) first, then Total YTD (descending)
-    watchlist.sort(key=lambda x: (x['active_cases'], x['total_ytd']), reverse=True)
+    watchlist.sort(
+        key=lambda item: (item['active_cases'], item['total_ytd']),
+        reverse=True,
+    )
 
     # Age distribution calculations
     age_distribution = {
@@ -845,6 +924,7 @@ def dashboard():
         available_years=available_years,
         selected_year=selected_year,
         watchlist=watchlist,
+        district_options=district_options,
         active_week=active_week,
         watchlist_period_label='YTD' if selected_year == datetime.now().year else 'Annual',
     )
