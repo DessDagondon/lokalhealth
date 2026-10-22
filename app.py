@@ -558,6 +558,9 @@ def dashboard_forecast_api():
             'rmse_lr': None,
             'mae_lr': None,
             'mean_error_lr': None,
+            'rmse_hybrid': None,
+            'mae_hybrid': None,
+            'mean_error_hybrid': None,
             'rmse_seasonal': None,
             'mae_seasonal': None,
             'mean_error_seasonal': None,
@@ -592,6 +595,9 @@ def dashboard_forecast_api():
             'rmse_lr': None,
             'mae_lr': None,
             'mean_error_lr': None,
+            'rmse_hybrid': None,
+            'mae_hybrid': None,
+            'mean_error_hybrid': None,
             'rmse_seasonal': None,
             'mae_seasonal': None,
             'mean_error_seasonal': None,
@@ -616,6 +622,9 @@ def dashboard_forecast_api():
             'rmse_lr': None,
             'mae_lr': None,
             'mean_error_lr': None,
+            'rmse_hybrid': None,
+            'mae_hybrid': None,
+            'mean_error_hybrid': None,
             'rmse_seasonal': None,
             'mae_seasonal': None,
             'mean_error_seasonal': None,
@@ -647,6 +656,9 @@ def dashboard_forecast_api():
             'rmse_lr': None,
             'mae_lr': None,
             'mean_error_lr': None,
+            'rmse_hybrid': None,
+            'mae_hybrid': None,
+            'mean_error_hybrid': None,
             'rmse_seasonal': None,
             'mae_seasonal': None,
             'mean_error_seasonal': None,
@@ -673,13 +685,22 @@ def dashboard_forecast_api():
     mae_naive = round(float(mean_absolute_error(y_actual_naive, y_naive)), 2)
     mean_error_naive = round(float(np.mean(y_naive - y_actual_naive)), 2)
 
-    # 3. Linear Regression Baseline 
+    # OLS captures the linear trend across morbidity weeks.
     lr_model = LinearRegression()
-    lr_model.fit(X, y)
-    y_pred_lr = lr_model.predict(X)
+    lr_features = X[['morbidity_week']]
+    lr_model.fit(lr_features, y)
+    y_pred_lr = lr_model.predict(lr_features)
     rmse_lr = round(float(np.sqrt(mean_squared_error(y, y_pred_lr))), 2)
     mae_lr = round(float(mean_absolute_error(y, y_pred_lr)), 2)
     mean_error_lr = round(float(np.mean(y_pred_lr - y)), 2)
+
+    # Adjust the OLS trend by the previous observation's residual to retain
+    # short-term persistence without replacing the underlying linear trend.
+    lr_residuals = y - pd.Series(y_pred_lr, index=y.index)
+    y_pred_hybrid = pd.Series(y_pred_lr, index=y.index) + lr_residuals.shift(1).fillna(0)
+    rmse_hybrid = round(float(np.sqrt(mean_squared_error(y, y_pred_hybrid))), 2)
+    mae_hybrid = round(float(mean_absolute_error(y, y_pred_hybrid)), 2)
+    mean_error_hybrid = round(float(np.mean(y_pred_hybrid - y)), 2)
 
     # 4. Historical Seasonal Median Baseline 
     historical_medians = trend['median'] # from get_dashboard_trend()
@@ -720,6 +741,9 @@ def dashboard_forecast_api():
         'rmse_lr': rmse_lr,
         'mae_lr': mae_lr,
         'mean_error_lr': mean_error_lr,
+        'rmse_hybrid': rmse_hybrid,
+        'mae_hybrid': mae_hybrid,
+        'mean_error_hybrid': mean_error_hybrid,
         'rmse_seasonal': rmse_seasonal,
         'mae_seasonal': mae_seasonal,
         'mean_error_seasonal': mean_error_seasonal,

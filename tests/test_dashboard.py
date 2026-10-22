@@ -220,9 +220,10 @@ class DashboardWarningStateTest(unittest.TestCase):
             self.assertGreaterEqual(item['upper_bound'], item['predicted_cases'])
         for metric in (
             'rmse_rf', 'mae_rf', 'rmse_naive', 'mae_naive',
-            'rmse_lr', 'mae_lr', 'rmse_seasonal', 'mae_seasonal',
+            'rmse_lr', 'mae_lr', 'rmse_hybrid', 'mae_hybrid',
+            'rmse_seasonal', 'mae_seasonal',
             'mean_error_rf', 'mean_error_naive', 'mean_error_lr',
-            'mean_error_seasonal',
+            'mean_error_hybrid', 'mean_error_seasonal',
         ):
             self.assertIsNotNone(forecast[metric])
         self.assertEqual(forecast['mean_error'], forecast['mean_error_naive'])
