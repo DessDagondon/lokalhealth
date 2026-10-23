@@ -127,7 +127,7 @@
                     <td>{{ record.morbidity_month if record.morbidity_month is not none else 'N/A' }}</td>
                     <td>{{ record.district }}</td>
                     <td>{{ record.barangay }}</td>
-                    <td>{{ record.age if record.age is not none and record.age != 0 else 'Unavailable' }}</td>
+                    <td>{{ record.age if record.age is not none else 'Unavailable' }}</td>
                     <td>{{ record.sex }}</td>
                     <td>{{ record.clinical_classification or 'N/A' }}</td>
                     <td>{{ record.case_classification or 'N/A' }}</td>

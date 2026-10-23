@@ -115,12 +115,12 @@ class User(UserMixin, db.Model):
 class DengueRecord(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     case_id = db.Column(db.String(50), unique=True, nullable=False)  # Anonymized ID
-    year = db.Column(db.Integer, nullable=True, default=datetime.now().year)
-    morbidity_month = db.Column(db.Integer, nullable=False)
+    year = db.Column(db.Integer, nullable=True)
+    morbidity_month = db.Column(db.Integer, nullable=True)
     morbidity_week = db.Column(db.Integer, nullable=True)
     district = db.Column(db.String(100), nullable=False, default='Talomo')
     barangay = db.Column(db.String(100), nullable=False)
-    age = db.Column(db.Integer, nullable=False)
+    age = db.Column(db.Integer, nullable=True)
     sex = db.Column(db.String(10), nullable=False)
     clinical_classification = db.Column(db.String(100), nullable=True)
     case_classification = db.Column(db.String(100), nullable=True)
@@ -1138,7 +1138,36 @@ def detect_upload_year(df=None, filename=''):
     if year_match:
         return int(year_match.group(1))
 
-    return datetime.now().year
+    return None
+
+
+def parse_optional_integer(value, field_name, minimum=None, maximum=None, required=False):
+    missing_values = {'', '#ref!', '#value!', '#n/a', 'n/a', 'na', 'nan', 'null', 'none', 'unavailable'}
+    if value is None or pd.isna(value):
+        value = None
+    elif isinstance(value, str):
+        value = value.strip()
+        if value.lower() in missing_values:
+            value = None
+
+    if value is None:
+        if required:
+            raise ValueError(f'{field_name} is required.')
+        return None
+
+    try:
+        numeric_value = float(value)
+        if not numeric_value.is_integer():
+            raise ValueError
+        parsed_value = int(numeric_value)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f'{field_name} must be a whole number.') from None
+
+    if minimum is not None and parsed_value < minimum:
+        raise ValueError(f'{field_name} must be at least {minimum}.')
+    if maximum is not None and parsed_value > maximum:
+        raise ValueError(f'{field_name} must be no greater than {maximum}.')
+    return parsed_value
 
 
 def is_generic_case_id(value):
@@ -1166,36 +1195,30 @@ def build_standardized_upload_df(df, filename=''):
             'age', 'sex', 'clinical_classification', 'case_classification'
         ])
 
-    upload_year = detect_upload_year(df, filename)
+    file_year = detect_upload_year(filename=filename)
     normalized_columns = {normalize_upload_header(column): column for column in df.columns}
     year_candidates = ['year', 'morbidity_year', 'report_year', 'epidemiologic_year', 'calendar_year', 'yr']
     year_source = next((normalized_columns[c] for c in year_candidates if c in normalized_columns), None)
     if year_source is not None:
-        df['year'] = pd.to_numeric(df[year_source], errors='coerce')
+        years = []
+        for row_number, value in enumerate(df[year_source], start=2):
+            parsed_year = parse_optional_integer(
+                value, f'Row {row_number} year', minimum=1900, maximum=2100
+            )
+            years.append(parsed_year if parsed_year is not None else file_year)
+        df['year'] = years
     else:
-        df['year'] = upload_year
-
-    df['year'] = df['year'].apply(lambda value: int(value) if pd.notna(value) and str(value).strip() not in {'', 'nan', 'n/a', 'na', 'null', 'none'} else upload_year)
+        df['year'] = file_year
 
     age_candidates = ['age_in_years', 'ageyears', 'age']
     age_source = next((normalized_columns[c] for c in age_candidates if c in normalized_columns), None)
     if age_source is not None:
-        df['age'] = pd.to_numeric(df[age_source], errors='coerce')
+        df['age'] = [
+            parse_optional_integer(value, f'Row {row_number} age', minimum=0)
+            for row_number, value in enumerate(df[age_source], start=2)
+        ]
     else:
-        df['age'] = pd.Series([None] * len(df), index=df.index)
-
-    def safe_age(value):
-        if value is None or (isinstance(value, float) and pd.isna(value)):
-            return 0
-        text = str(value).strip().lower()
-        if text in {'', 'nan', 'n/a', 'na', 'null', 'none'}:
-            return 0
-        try:
-            return int(float(value))
-        except (TypeError, ValueError, OverflowError):
-            return 0
-
-    df['age'] = df['age'].apply(safe_age)
+        df['age'] = None
 
     case_id_source = find_first_matching_column(df.columns, ['case_code', 'case_id', 'caseid'])
     month_source = find_first_matching_column(df.columns, ['morbidity_month', 'morbiditymonth', 'month'])
@@ -1213,20 +1236,18 @@ def build_standardized_upload_df(df, filename=''):
             return pd.Series([fallback] * len(df), index=df.index)
         return df[source_name].apply(lambda value: coalesce_text(value, fallback))
 
-    df['morbidity_week'] = pd.to_numeric(df[week_source], errors='coerce') if week_source else pd.Series([None] * len(df), index=df.index)
-    df['morbidity_month'] = pd.to_numeric(df[month_source], errors='coerce') if month_source else pd.Series([None] * len(df), index=df.index)
-
-    missing_month_mask = df['morbidity_month'].isna() & df['morbidity_week'].notna()
-    if missing_month_mask.any():
-        df.loc[missing_month_mask, 'morbidity_month'] = ((df.loc[missing_month_mask, 'morbidity_week'] - 1) // 4.33 + 1).fillna(0).astype(int)
-
-    df['morbidity_month'] = df['morbidity_month'].apply(
-        lambda value: max(1, min(12, int(value))) if pd.notna(value) else 1
-    )
-
-    df['morbidity_week'] = df['morbidity_week'].apply(
-        lambda value: int(value) if pd.notna(value) else None
-    )
+    df['morbidity_week'] = [
+        parse_optional_integer(
+            value, f'Row {row_number} morbidity week', minimum=1, maximum=53
+        )
+        for row_number, value in enumerate(df[week_source], start=2)
+    ] if week_source else None
+    df['morbidity_month'] = [
+        parse_optional_integer(
+            value, f'Row {row_number} morbidity month', minimum=1, maximum=12
+        )
+        for row_number, value in enumerate(df[month_source], start=2)
+    ] if month_source else None
 
     if case_id_source is not None:
         raw_case_ids = df[case_id_source].astype(str).str.strip()
@@ -1242,7 +1263,9 @@ def build_standardized_upload_df(df, filename=''):
         elif text and is_generic_case_id(text):
             case_id = text.upper()
         else:
-            case_id = f"{upload_year}-REC-{idx + 1:05d}"
+            row_year = df.iloc[idx]['year']
+            id_year = None if pd.isna(row_year) else int(row_year)
+            case_id = f"{id_year}-REC-{idx + 1:05d}" if id_year else f"REC-{idx + 1:05d}"
 
         if case_id in seen:
             seen[case_id] += 1
@@ -1271,25 +1294,6 @@ def build_standardized_upload_df(df, filename=''):
         axis=1,
     )
     return df.loc[~blank_mask].reset_index(drop=True)
-
-
-def safe_int(value, default=None):
-    if value is None or pd.isna(value):
-        return default
-
-    if isinstance(value, str):
-        cleaned = value.strip()
-        if not cleaned or cleaned.lower() in {'#ref!', '#value!', '#n/a', 'n/a', 'na', 'nan', 'null', 'none'}:
-            return default
-        try:
-            return int(float(cleaned))
-        except (TypeError, ValueError, OverflowError):
-            return default
-
-    try:
-        return int(float(value))
-    except (TypeError, ValueError, OverflowError):
-        return default
 
 
 def read_upload_dataframe(file, filename):
@@ -1388,12 +1392,18 @@ def records():
 
                 record = DengueRecord(
                     case_id=candidate_case_id,
-                    year=safe_int(request.form.get('year'), datetime.now().year),
+                    year=parse_optional_integer(
+                        request.form.get('year'), 'Year', minimum=1900, maximum=2100, required=True
+                    ),
                     district=request.form.get('district', '').strip() or 'Talomo',
-                    morbidity_month=safe_int(request.form.get('morbidity_month'), 1),
-                    morbidity_week=safe_int(request.form.get('morbidity_week')),
+                    morbidity_month=parse_optional_integer(
+                        request.form.get('morbidity_month'), 'Morbidity month', minimum=1, maximum=12
+                    ),
+                    morbidity_week=parse_optional_integer(
+                        request.form.get('morbidity_week'), 'Morbidity week', minimum=1, maximum=53
+                    ),
                     barangay=request.form.get('barangay', '').strip() or 'Unavailable',
-                    age=safe_int(request.form.get('age'), 0),
+                    age=parse_optional_integer(request.form.get('age'), 'Age', minimum=0),
                     sex=request.form.get('sex', '').strip() or 'Unavailable',
                     clinical_classification=request.form.get('clinical_classification') or 'Unavailable',
                     case_classification=request.form.get('case_classification') or 'Unavailable',
@@ -1445,7 +1455,7 @@ def records():
                             case_id_value = row.get('case_id')
                             case_id_val = '' if pd.isna(case_id_value) else str(case_id_value).strip()
                             if not case_id_val or case_id_val.upper() in {'#REF!', '#VALUE!', '#N/A', 'N/A', 'NAN', 'NULL', 'UNAVAILABLE'}:
-                                case_id_val = f"{datetime.now().year}-REC-{added_count + 1000:05d}"
+                                case_id_val = f"REC-{added_count + 1000:05d}"
 
                             candidate_case_id = case_id_val
                             duplicate_index = 1
@@ -1455,12 +1465,16 @@ def records():
 
                             record = DengueRecord(
                                 case_id=candidate_case_id,
-                                year=safe_int(row.get('year'), datetime.now().year),
-                                morbidity_month=safe_int(row.get('morbidity_month'), 1),
-                                morbidity_week=safe_int(row.get('morbidity_week')),
+                                year=parse_optional_integer(row.get('year'), 'Year', minimum=1900, maximum=2100),
+                                morbidity_month=parse_optional_integer(
+                                    row.get('morbidity_month'), 'Morbidity month', minimum=1, maximum=12
+                                ),
+                                morbidity_week=parse_optional_integer(
+                                    row.get('morbidity_week'), 'Morbidity week', minimum=1, maximum=53
+                                ),
                                 district=str(row.get('district') or 'Unavailable').strip() or 'Unavailable',
                                 barangay=str(row.get('barangay') or 'Unavailable').strip() or 'Unavailable',
-                                age=safe_int(row.get('age'), 0),
+                                age=parse_optional_integer(row.get('age'), 'Age', minimum=0),
                                 sex=str(row.get('sex') or 'Unavailable').strip() or 'Unavailable',
                                 clinical_classification=str(row.get('clinical_classification') or 'Unavailable').strip() or 'Unavailable',
                                 case_classification=str(row.get('case_classification') or 'Unavailable').strip() or 'Unavailable',
@@ -1824,16 +1838,13 @@ def edit_record(record_id):
 
     if request.method == 'POST':
         try:
-            month = int(request.form.get('morbidity_month', ''))
-            if not 1 <= month <= 12:
-                raise ValueError('Morbidity month must be between 1 and 12.')
-            week_value = request.form.get('morbidity_week', '').strip()
-            week = int(week_value) if week_value else None
-            if week is not None and not 1 <= week <= 52:
-                raise ValueError('Morbidity week must be between 1 and 52.')
-            age = int(request.form.get('age', ''))
-            if age < 0:
-                raise ValueError('Age cannot be negative.')
+            month = parse_optional_integer(
+                request.form.get('morbidity_month'), 'Morbidity month', minimum=1, maximum=12
+            )
+            week = parse_optional_integer(
+                request.form.get('morbidity_week'), 'Morbidity week', minimum=1, maximum=53
+            )
+            age = parse_optional_integer(request.form.get('age'), 'Age', minimum=0)
 
             updates = {
                 'morbidity_month': month,
@@ -1948,8 +1959,12 @@ def download_summary_pdf():
 
     summary = get_report_summary_for_year(selected_year)
     month_counts = {}
+    missing_month_count = 0
     for record in records_list:
-        month_counts[record.morbidity_month] = month_counts.get(record.morbidity_month, 0) + 1
+        if record.morbidity_month is None:
+            missing_month_count += 1
+        else:
+            month_counts[record.morbidity_month] = month_counts.get(record.morbidity_month, 0) + 1
 
     pdf_buffer = BytesIO()
     document = canvas.Canvas(pdf_buffer, pagesize=letter)
@@ -1965,6 +1980,12 @@ def download_summary_pdf():
     y_position = 660
     for month, count in sorted(month_counts.items()):
         document.drawString(90, y_position, f'Month {month}: {count} case(s)')
+        y_position -= 18
+        if y_position < 72:
+            document.showPage()
+            y_position = 740
+    if missing_month_count:
+        document.drawString(90, y_position, f'Month not reported: {missing_month_count} case(s)')
         y_position -= 18
         if y_position < 72:
             document.showPage()
@@ -2248,9 +2269,30 @@ def migrate_dengue_record_table():
                 text('ALTER TABLE dengue_record ADD COLUMN is_archived BOOLEAN NOT NULL DEFAULT 0')
             )
 
-    # Backfill year values from current year for legacy rows without explicit data.
-    with db.engine.begin() as connection:
-        connection.execute(text('UPDATE dengue_record SET year = :year WHERE year IS NULL'), {'year': datetime.now().year})
+    column_details = {
+        column['name']: column
+        for column in db.inspect(db.engine).get_columns('dengue_record')
+    }
+    if (
+        {'age', 'morbidity_month'}.issubset(column_details)
+        and (not column_details['age']['nullable'] or not column_details['morbidity_month']['nullable'])
+    ):
+        legacy_table = 'dengue_record_nullable_migration_legacy'
+        with db.engine.begin() as connection:
+            connection.execute(text(f'ALTER TABLE dengue_record RENAME TO {legacy_table}'))
+            DengueRecord.__table__.create(connection)
+            copied_columns = [
+                column.name
+                for column in DengueRecord.__table__.columns
+                if column.name in column_details
+            ]
+            column_list = ', '.join(f'"{column}"' for column in copied_columns)
+            connection.execute(text(
+                f'INSERT INTO dengue_record ({column_list}) '
+                f'SELECT {column_list} FROM {legacy_table}'
+            ))
+            connection.execute(text(f'DROP TABLE {legacy_table}'))
+
     RecordAuditLog.__table__.create(db.engine, checkfirst=True)
 
 def migrate_user_table():

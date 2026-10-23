@@ -98,6 +98,37 @@ class DashboardDataQualityTest(unittest.TestCase):
         self.assertEqual(result.loc[0, 'morbidity_month'], 7)
         self.assertTrue(pd.isna(result.loc[0, 'morbidity_week']))
 
+    def test_missing_age_month_and_week_remain_missing(self):
+        source = pd.DataFrame([{
+            'Case ID': 'MISSING-DATA-1',
+            'Age': None,
+            'Morbidity Week': 12,
+        }])
+
+        result = build_standardized_upload_df(source, filename='cases.csv')
+
+        self.assertTrue(pd.isna(result.loc[0, 'age']))
+        self.assertTrue(pd.isna(result.loc[0, 'morbidity_month']))
+        self.assertEqual(result.loc[0, 'morbidity_week'], 12)
+        self.assertTrue(pd.isna(result.loc[0, 'year']))
+
+    def test_invalid_age_and_month_are_rejected_with_row_context(self):
+        invalid_age = pd.DataFrame([{
+            'Case ID': 'INVALID-AGE',
+            'Age': 'unknown',
+            'Morbidity Month': 3,
+        }])
+        with self.assertRaisesRegex(ValueError, r'Row 2 age must be a whole number'):
+            build_standardized_upload_df(invalid_age, filename='cases.csv')
+
+        invalid_month = pd.DataFrame([{
+            'Case ID': 'INVALID-MONTH',
+            'Age': 3,
+            'Morbidity Month': 13,
+        }])
+        with self.assertRaisesRegex(ValueError, r'Row 2 morbidity month must be no greater than 12'):
+            build_standardized_upload_df(invalid_month, filename='cases.csv')
+
     def test_historical_warning_uses_latest_week_and_confirmed_counts(self):
         with app.app_context():
             trend = get_dashboard_trend(2025)

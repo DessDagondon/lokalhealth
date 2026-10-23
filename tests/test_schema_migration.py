@@ -33,6 +33,56 @@ class AssignedBarangayMigrationTest(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_dengue_migration_makes_age_and_month_nullable_without_losing_data(self):
+        from app import DengueRecord, migrate_dengue_record_table
+        from sqlalchemy import text
+
+        with app.app_context():
+            db.drop_all()
+            with db.engine.begin() as connection:
+                connection.execute(text('''
+                    CREATE TABLE dengue_record (
+                        id INTEGER PRIMARY KEY,
+                        case_id VARCHAR(50) NOT NULL UNIQUE,
+                        year INTEGER,
+                        morbidity_month INTEGER NOT NULL,
+                        morbidity_week INTEGER,
+                        district VARCHAR(100) NOT NULL,
+                        barangay VARCHAR(100) NOT NULL,
+                        age INTEGER NOT NULL,
+                        sex VARCHAR(10) NOT NULL,
+                        clinical_classification VARCHAR(100),
+                        case_classification VARCHAR(100),
+                        sync_status VARCHAR(20),
+                        is_archived BOOLEAN NOT NULL DEFAULT 0
+                    )
+                '''))
+                connection.execute(text('''
+                    INSERT INTO dengue_record (
+                        id, case_id, year, morbidity_month, morbidity_week,
+                        district, barangay, age, sex, clinical_classification,
+                        case_classification, sync_status, is_archived
+                    ) VALUES (
+                        7, 'LEGACY-7', 2024, 4, 14, 'Talomo', 'Matina',
+                        31, 'F', 'Dengue without Warning Signs', 'Confirmed',
+                        'Synced', 0
+                    )
+                '''))
+
+            migrate_dengue_record_table()
+
+            columns = {
+                column['name']: column
+                for column in db.inspect(db.engine).get_columns('dengue_record')
+            }
+            self.assertTrue(columns['age']['nullable'])
+            self.assertTrue(columns['morbidity_month']['nullable'])
+            record = db.session.get(DengueRecord, 7)
+            self.assertEqual(record.case_id, 'LEGACY-7')
+            self.assertEqual(record.age, 31)
+            self.assertEqual(record.morbidity_month, 4)
+
+
     def test_dengue_archive_and_audit_migration_is_idempotent(self):
         from app import DengueRecord, RecordAuditLog, migrate_dengue_record_table
         from sqlalchemy import text
@@ -194,6 +244,54 @@ class UploadHeaderCompatibilityTest(unittest.TestCase):
                 record = DengueRecord.query.filter_by(case_id='W-100').first()
                 self.assertIsNotNone(record)
                 self.assertIsNone(record.morbidity_week)
+
+    def test_upload_preserves_missing_age_and_month_and_rejects_invalid_age(self):
+        from app import DengueRecord
+        import io
+
+        with app.app_context():
+            db.drop_all()
+            db.create_all()
+            from app import User
+            user = User(username='missingdatauser', role='Admin', can_create=True)
+            user.set_password('pass')
+            db.session.add(user)
+            db.session.commit()
+
+        with app.test_client() as client:
+            client.post('/login', data={'username': 'missingdatauser', 'password': 'pass'}, follow_redirects=False)
+            missing_data_csv = (
+                'Case ID,Morbidity Month,Morbidity Week,District,Barangay,Age,Sex\n'
+                'MISSING-1,,12,Talomo,Matina,,F\n'
+            )
+            response = client.post(
+                '/records',
+                data={'file': (io.BytesIO(missing_data_csv.encode('utf-8')), 'cases.csv')},
+                content_type='multipart/form-data',
+                follow_redirects=False,
+            )
+            self.assertIn('Successfully imported', response.get_data(as_text=True))
+            with app.app_context():
+                record = DengueRecord.query.filter_by(case_id='MISSING-1').first()
+                self.assertIsNotNone(record)
+                self.assertIsNone(record.age)
+                self.assertIsNone(record.morbidity_month)
+                self.assertIsNone(record.year)
+                self.assertEqual(record.morbidity_week, 12)
+
+            invalid_age_csv = (
+                'Year,Case ID,Morbidity Month,Age\n'
+                '2024,INVALID-AGE,3,not-known\n'
+            )
+            response = client.post(
+                '/records',
+                data={'file': (io.BytesIO(invalid_age_csv.encode('utf-8')), 'cases.csv')},
+                content_type='multipart/form-data',
+                follow_redirects=False,
+            )
+            self.assertIn('Row 2 age must be a whole number', response.get_data(as_text=True))
+            with app.app_context():
+                self.assertEqual(DengueRecord.query.count(), 1)
 
     def test_manual_entry_saves_selected_year(self):
         from app import DengueRecord
