@@ -323,23 +323,22 @@ def get_morbidity_week_date_range(year, morbidity_week):
     end_label = f'{week_end.strftime("%b")} {week_end.day}, {week_end.year}'
     return f'{start_label} \u2013 {end_label}'
 
-def evaluate_dashboard_alert(current_count, baseline_threshold):
-    pre_surge_threshold = round(0.75 * baseline_threshold, 2)
-    if current_count == 0 and baseline_threshold == 0:
+def evaluate_dashboard_alert(current_count, median_threshold, epidemic_threshold):
+    if current_count == 0 and median_threshold == 0 and epidemic_threshold == 0:
         return {
             'risk_level': 'GREEN',
             'risk_label': 'Below Alert Threshold',
             'recommendation': 'No baseline cases available for comparison.',
             'action_required': 'Action Required: Continue routine monitoring while awaiting reported case data.',
         }
-    if current_count < pre_surge_threshold:
+    if current_count < median_threshold:
         return {
             'risk_level': 'GREEN',
             'risk_label': 'Below Alert Threshold',
             'recommendation': 'Routine Monitoring',
             'action_required': 'Action Required: Continue routine monitoring and community prevention activities.',
         }
-    if current_count <= baseline_threshold:
+    if current_count <= epidemic_threshold:
         return {
             'risk_level': 'YELLOW',
             'risk_label': 'Alert Threshold',
@@ -353,10 +352,10 @@ def evaluate_dashboard_alert(current_count, baseline_threshold):
         'action_required': 'Action Required: Initiate targeted vector control and active outbreak response.',
     }
 
-def get_intervention_priority(active_cases, baseline_threshold):
-    if baseline_threshold is None:
+def get_intervention_priority(active_cases, median_threshold, epidemic_threshold):
+    if median_threshold is None or epidemic_threshold is None:
         return 'BASELINE UNAVAILABLE', 'info'
-    alert = evaluate_dashboard_alert(active_cases, baseline_threshold)
+    alert = evaluate_dashboard_alert(active_cases, median_threshold, epidemic_threshold)
     return alert['risk_label'].upper(), {
         'GREEN': 'success',
         'YELLOW': 'warning',
@@ -365,7 +364,9 @@ def get_intervention_priority(active_cases, baseline_threshold):
 
 def get_dashboard_trend(current_year=None):
     current_year = current_year or datetime.now().year
-    baseline_years = tuple(year for year in get_dashboard_years() if year < current_year)
+    baseline_years = tuple(
+        year for year in get_dashboard_years() if year < current_year
+    )[-3:]
     def calculate_quantile(values, quantile):
         return round(pd.Series(values, dtype='float64').quantile(quantile), 2) if values else 0
 
@@ -498,11 +499,12 @@ def get_dashboard_trend(current_year=None):
             'action_required': 'Morbidity-week data is unavailable for this year; review monthly trends instead.',
         }
     else:
-        alert = evaluate_dashboard_alert(current_count, current_threshold)
+        alert = evaluate_dashboard_alert(current_count, current_median, current_threshold)
     week_date_range = get_morbidity_week_date_range(current_year, current_week)
 
     return {
         'year': current_year,
+        'baseline_years': list(weekly_baseline_years),
         'weeks': list(range(1, 53)),
         'actual': current_actual,
         'median': median,
@@ -515,9 +517,9 @@ def get_dashboard_trend(current_year=None):
         'current_count': current_count,
         'current_median': current_median,
         'current_threshold': current_threshold,
-        'has_baseline_data': current_threshold is not None,
+        'current_epidemic_threshold': current_threshold,
+        'has_baseline_data': bool(weekly_baseline_years),
         'weekly_data_available': current_week_data_available,
-        'pre_surge_threshold': round(0.75 * current_threshold, 2),
         **alert,
     }
 
@@ -803,14 +805,15 @@ def dashboard():
                 location['active_cases'] += 1
 
     historical_watchlist_rows = []
-    if active_week is not None:
+    watchlist_baseline_years = tuple(trend['baseline_years'])
+    if active_week is not None and watchlist_baseline_years:
         historical_watchlist_rows = db.session.query(
             DengueRecord.year,
             DengueRecord.district,
             DengueRecord.barangay,
             db.func.count(DengueRecord.id),
         ).filter(
-            DengueRecord.year < selected_year,
+            DengueRecord.year.in_(watchlist_baseline_years),
             DengueRecord.morbidity_week == active_week,
             DengueRecord.is_archived.is_(False),
             DengueRecord.case_classification.ilike('%confirmed%'),
@@ -826,25 +829,38 @@ def dashboard():
             str(district).strip() if is_available_dashboard_value(district) else '',
             str(barangay).strip(),
         )
-        historical_watchlist_counts.setdefault(key, []).append(int(count))
+        historical_watchlist_counts.setdefault(key, {})[int(year)] = int(count)
 
     clusters = sorted(barangay_counts)
     watchlist = []
     for (district, barangay), counts in watchlist_locations.items():
-        historical_counts = historical_watchlist_counts.get((district, barangay), [])
-        threshold = (
+        historical_counts_by_year = historical_watchlist_counts.get(
+            (district, barangay), {}
+        )
+        historical_counts = [
+            historical_counts_by_year.get(year, 0)
+            for year in watchlist_baseline_years
+        ]
+        median_threshold = (
+            float(pd.Series(historical_counts, dtype='float64').quantile(0.5))
+            if historical_counts else None
+        )
+        epidemic_threshold = (
             float(pd.Series(historical_counts, dtype='float64').quantile(0.75))
             if historical_counts else None
         )
         status, status_color = get_intervention_priority(
             counts['active_cases'],
-            threshold,
+            median_threshold,
+            epidemic_threshold,
         )
         watchlist.append({
             'name': barangay,
             'district': district,
             'active_cases': counts['active_cases'],
             'total_ytd': counts['total_ytd'],
+            'median': median_threshold,
+            'baseline_75th': epidemic_threshold,
             'status': status,
             'status_color': status_color,
         })

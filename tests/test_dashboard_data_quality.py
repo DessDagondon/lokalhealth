@@ -135,8 +135,9 @@ class DashboardDataQualityTest(unittest.TestCase):
 
         self.assertEqual(trend['current_week'], 20)
         self.assertEqual(trend['current_count'], 8)
+        self.assertEqual(trend['median'][19], 10)
         self.assertEqual(trend['baseline_75th'][19], 10)
-        self.assertEqual(trend['risk_level'], 'YELLOW')
+        self.assertEqual(trend['risk_level'], 'GREEN')
 
     def test_suspected_only_week_is_zero_and_unrecorded_future_week_is_none(self):
         with app.app_context():
@@ -184,7 +185,7 @@ class DashboardDataQualityTest(unittest.TestCase):
 
         body = response.get_data(as_text=True)
         self.assertEqual(response.status_code, 200)
-        self.assertIn('Historical 75th percentile:', body)
+        self.assertIn('Epidemic Threshold (P', body)
         self.assertIn('ACTIVE CLUSTERS', body)
         self.assertIn('BLUE - Historical Baseline', no_baseline)
         self.assertIn('Weekly Data Unavailable', unavailable)

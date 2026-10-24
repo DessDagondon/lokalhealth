@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime
 
-from app import app, db, DengueRecord, User
+from app import app, db, DengueRecord, User, evaluate_dashboard_alert, get_dashboard_trend
 
 
 class DashboardWarningStateTest(unittest.TestCase):
@@ -52,14 +52,47 @@ class DashboardWarningStateTest(unittest.TestCase):
             body = response.get_data(as_text=True)
             self.assertEqual(response.status_code, 200)
             self.assertIn('Early warning status for MW', body)
-            self.assertIn('Historical 75th percentile: 10.0', body)
+            self.assertIn('Historical Median (P', body)
+            self.assertIn('Epidemic Threshold (P', body)
 
             trend = client.get('/api/dashboard/trend?year=2024').get_json()
             current_week = min(datetime.now().isocalendar().week, 52) - 1
             self.assertEqual(trend['actual'][current_week], 20)
+            self.assertEqual(trend['median'][current_week], 10.0)
             self.assertEqual(trend['baseline_75th'][current_week], 10.0)
-            self.assertEqual(trend['pre_surge_threshold'], 7.5)
             self.assertEqual(trend['risk_level'], 'RED')
+
+    def test_alert_levels_use_median_and_upper_quartile_boundaries(self):
+        self.assertEqual(evaluate_dashboard_alert(4, 5, 7)['risk_level'], 'GREEN')
+        self.assertEqual(evaluate_dashboard_alert(5, 5, 7)['risk_level'], 'YELLOW')
+        self.assertEqual(evaluate_dashboard_alert(7, 5, 7)['risk_level'], 'YELLOW')
+        self.assertEqual(evaluate_dashboard_alert(8, 5, 7)['risk_level'], 'RED')
+
+    def test_trend_uses_only_the_latest_three_historical_years(self):
+        with app.app_context():
+            current_week = min(datetime.now().isocalendar().week, 52)
+            for case_number in range(40):
+                db.session.add(DengueRecord(
+                    case_id=f'OLD-{case_number:03d}',
+                    year=2022,
+                    morbidity_month=3,
+                    morbidity_week=current_week,
+                    district='Talomo',
+                    barangay='Older Barangay',
+                    age=24,
+                    sex='F',
+                    clinical_classification='Dengue without Warning Signs',
+                    case_classification='Confirmed',
+                    sync_status='Synced',
+                ))
+            db.session.commit()
+
+            trend = get_dashboard_trend(2026)
+
+        current_week_index = min(datetime.now().isocalendar().week, 52) - 1
+        self.assertEqual(trend['baseline_years'], [2023, 2024, 2025])
+        self.assertEqual(trend['median'][current_week_index], 20.0)
+        self.assertEqual(trend['baseline_75th'][current_week_index], 25.0)
 
     def test_2023_dashboard_shows_baseline_unavailable_without_prior_years(self):
         with app.app_context():
@@ -149,11 +182,11 @@ class DashboardWarningStateTest(unittest.TestCase):
             self.assertIn('DEMOGRAPHICS', dashboard_body)
             self.assertIn('Male', dashboard_body)
             self.assertIn('Clinical classification', dashboard_body)
-            self.assertIn('Historical 75th percentile:', dashboard_body)
+            self.assertIn('Epidemic Threshold (P', dashboard_body)
 
             expected_levels = {
                 2023: 'BLUE',
-                2024: 'YELLOW',
+                2024: 'GREEN',
                 2025: 'RED',
                 2026: 'GREEN',
             }

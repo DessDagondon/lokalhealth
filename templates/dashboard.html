@@ -31,7 +31,17 @@
             {% else %}
             <h5 class="alert-heading mb-1 fw-bold">Early warning status for {{ selected_year }} (morbidity week unavailable)</h5>
             {% endif %}
-            <div class="small">{% if trend.weekly_data_available %}{{ trend.current_count }} reported cases{% else %}Weekly case count unavailable{% endif %} | {% if not trend.weekly_data_available %}Weekly comparison unavailable{% elif trend.has_baseline_data and trend.current_threshold > 0 %}Historical 75th percentile: {{ trend.current_threshold }}{% else %}Baseline N/A{% endif %}</div>
+            <div class="small">
+                {% if trend.weekly_data_available %}{{ trend.current_count }} reported cases{% else %}Weekly case count unavailable{% endif %}
+                |
+                {% if not trend.weekly_data_available %}
+                Weekly comparison unavailable
+                {% elif trend.has_baseline_data %}
+                Historical Median (P<sub>50</sub>): {{ trend.current_median }} &bull; Epidemic Threshold (P<sub>75</sub>): {{ trend.current_epidemic_threshold }}
+                {% else %}
+                Baseline N/A
+                {% endif %}
+            </div>
             <div id="dashboard-action-required" class="small mt-1">{{ trend.action_required }}</div>
         </div>
         <div class="alert-right-content text-end">
@@ -332,6 +342,7 @@
     const weeklyValues = morbidity_week_trends.map(item => item.count);
     const monthlyLabels = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
     const monthlyValues = trend.monthly_actual || [];
+    const monthlyMedian = trend.monthly_median || [];
     const monthlyBaseline = trend.monthly_baseline_75th || [];
     const forecastCard = document.getElementById('dashboard-forecast');
     const forecastValue = document.getElementById('forecast-value');
@@ -414,7 +425,16 @@
                     tension: 0.3,
                     pointRadius: 2
                 }, {
-                    label: 'Historical confirmed-case 75th percentile',
+                    label: 'Historical median (P50)',
+                    data: trend.median,
+                    borderColor: '#f0ad00',
+                    backgroundColor: 'transparent',
+                    borderDash: [6, 4],
+                    fill: false,
+                    tension: 0.3,
+                    pointRadius: 0
+                }, {
+                    label: 'Historical 75th percentile (P75)',
                     data: trend.baseline_75th,
                     borderColor: '#dc3545',
                     backgroundColor: 'transparent',
@@ -488,15 +508,16 @@
             }
         });
 
-        const forecastDataset = chart.data.datasets[2];
-        const intervalLowerDataset = chart.data.datasets[3];
-        const intervalUpperDataset = chart.data.datasets[4];
+        const forecastDataset = chart.data.datasets[3];
+        const intervalLowerDataset = chart.data.datasets[4];
+        const intervalUpperDataset = chart.data.datasets[5];
         const weeklyForecastData = (forecasts, currentWeek, currentCases, property) => {
             const maxForecastWeek = Math.max(currentWeek, ...forecasts.map(item => Number(item.week)));
             while (weeklyLabels.length < maxForecastWeek) {
                 const week = weeklyLabels.length + 1;
                 weeklyLabels.push(`MW ${week}`);
                 weeklyValues.push(null);
+                trend.median.push(null);
                 trend.baseline_75th.push(null);
                 if (activePeriod === 'weekly') {
                     chart.data.labels.push(`MW ${week}`);
@@ -655,7 +676,8 @@
                 activePeriod = monthly ? 'monthly' : 'weekly';
                 chart.data.labels = monthly ? monthlyLabels : weeklyLabels;
                 chart.data.datasets[0].data = monthly ? monthlyValues : weeklyValues;
-                chart.data.datasets[1].data = monthly ? monthlyBaseline : trend.baseline_75th;
+                chart.data.datasets[1].data = monthly ? monthlyMedian : trend.median;
+                chart.data.datasets[2].data = monthly ? monthlyBaseline : trend.baseline_75th;
                 forecastDataset.hidden = monthly || !Array.isArray(forecastDataset.data) || !forecastDataset.data.some(value => value !== null);
                 intervalLowerDataset.hidden = monthly || Number(forecastHorizon && forecastHorizon.value) < 2;
                 intervalUpperDataset.hidden = monthly || Number(forecastHorizon && forecastHorizon.value) < 2;
