@@ -247,18 +247,20 @@ class DashboardWarningStateTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         forecast = response.get_json()
+        self.assertEqual(forecast['predicted_cases'], forecast['current_cases'])
         self.assertEqual([item['week'] for item in forecast['forecasts']], [5, 6, 7, 8])
         for item in forecast['forecasts']:
             self.assertLessEqual(item['lower_bound'], item['predicted_cases'])
             self.assertGreaterEqual(item['upper_bound'], item['predicted_cases'])
         for metric in (
             'rmse_rf', 'mae_rf', 'rmse_naive', 'mae_naive',
-            'rmse_lr', 'mae_lr', 'rmse_hybrid', 'mae_hybrid',
+            'rmse_lr', 'mae_lr',
             'rmse_seasonal', 'mae_seasonal',
             'mean_error_rf', 'mean_error_naive', 'mean_error_lr',
-            'mean_error_hybrid', 'mean_error_seasonal',
+            'mean_error_seasonal',
         ):
             self.assertIsNotNone(forecast[metric])
+        self.assertNotIn('rmse_hybrid', forecast)
         self.assertEqual(forecast['mean_error'], forecast['mean_error_naive'])
         self.assertEqual(
             [item['predicted_cases'] for item in forecast['forecasts']],
@@ -277,7 +279,10 @@ class DashboardWarningStateTest(unittest.TestCase):
             )
             dashboard = client.get('/dashboard').get_data(as_text=True)
         self.assertIn('Random Forest', dashboard)
-        self.assertIn('Naive Persistence', dashboard)
+        self.assertIn('Naïve Persistence Forecasting', dashboard)
+        self.assertIn('Linear Regression', dashboard)
+        self.assertIn('Seasonal Median', dashboard)
+        self.assertIn('table-primary', dashboard)
         self.assertIn('Severe 1', dashboard)
         self.assertIn('Suspected 1', dashboard)
         self.assertIn('Male 1', dashboard)

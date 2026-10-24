@@ -52,7 +52,8 @@
                     <option value="1">1-Week Ahead</option>
                     <option value="4">Multi-Week Projection</option>
                 </select>
-                <strong id="forecast-value">Loading...</strong>
+                <small class="text-muted d-block" title="Naïve Persistence Forecasting carries the latest observed weekly case count forward.">Naïve Persistence Forecasting &middot; latest count carried forward</small>
+                <strong id="forecast-value" title="Naïve Persistence Forecasting uses the latest observed weekly case count as the short-term operational prediction.">Loading...</strong>
                 <span id="forecast-direction" class="badge d-none mt-1" aria-live="polite"></span>
                 <button type="button" class="btn btn-link btn-sm p-0 mt-1" data-bs-toggle="modal" data-bs-target="#modelPerformanceModal">Model performance</button>
             </div>
@@ -190,7 +191,7 @@
                     <button type="button" class="btn btn-outline-primary trend-period-button" data-period="monthly" aria-pressed="false">Monthly</button>
                 </div>
             </div>
-            <div id="forecast-interval-note" class="small text-muted mt-2" hidden>Shaded band shows an estimated 95% uncertainty interval.</div>
+            <div id="forecast-interval-note" class="small text-muted mt-2" hidden>Naïve Persistence Forecasting projection; shaded band shows an estimated 95% uncertainty interval based on its historical error.</div>
             <div class="bg-light rounded" style="height: 300px;">
                 <canvas id="morbidityWeekChart" data-morbidity-week-trends='{{ morbidity_week_trends | tojson }}' data-trend='{{ trend | tojson }}'></canvas>
             </div>
@@ -247,7 +248,7 @@
             <div class="modal-header">
                 <div>
                     <h5 class="modal-title fw-bold" id="modelPerformanceModalLabel">Model performance</h5>
-                    <div class="small text-muted">In-sample fit metrics &middot; lower RMSE and MAE indicate closer fit</div>
+                    <div class="small text-muted">Naïve Persistence Forecasting is the primary short-term operational predictor. Other models are comparative benchmarks; lower in-sample RMSE and MAE indicate closer fit.</div>
                 </div>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
@@ -256,8 +257,8 @@
                     <table class="table table-sm align-middle mb-2">
                         <thead><tr><th scope="col">Model</th><th scope="col" class="text-end">RMSE</th><th scope="col" class="text-end">MAE</th><th scope="col" class="text-end">Mean Error</th></tr></thead>
                         <tbody>
+                            <tr class="table-primary"><th scope="row" title="Primary short-term operational predictor">Naïve Persistence Forecasting</th><td id="metric-rmse-naive" class="text-end">—</td><td id="metric-mae-naive" class="text-end">—</td><td id="metric-mean-error-naive" class="text-end">—</td></tr>
                             <tr><th scope="row">Random Forest</th><td id="metric-rmse-rf" class="text-end">—</td><td id="metric-mae-rf" class="text-end">—</td><td id="metric-mean-error-rf" class="text-end">—</td></tr>
-                            <tr><th scope="row">Naive Persistence</th><td id="metric-rmse-naive" class="text-end">—</td><td id="metric-mae-naive" class="text-end">—</td><td id="metric-mean-error-naive" class="text-end">—</td></tr>
                             <tr><th scope="row">Linear Regression</th><td id="metric-rmse-lr" class="text-end">—</td><td id="metric-mae-lr" class="text-end">—</td><td id="metric-mean-error-lr" class="text-end">—</td></tr>
                             <tr><th scope="row">Seasonal Median</th><td id="metric-rmse-seasonal" class="text-end">—</td><td id="metric-mae-seasonal" class="text-end">—</td><td id="metric-mean-error-seasonal" class="text-end">—</td></tr>
                         </tbody>
@@ -443,7 +444,7 @@
                     tension: 0.3,
                     pointRadius: 0
                 }, {
-                    label: 'Next Week Projection',
+                    label: 'Naïve Persistence Forecast',
                     data: weeklyLabels.map(() => null),
                     borderColor: '#198754',
                     backgroundColor: '#198754',
@@ -456,7 +457,7 @@
                     spanGaps: true,
                     hidden: true
                 }, {
-                    label: 'Projection interval lower bound',
+                    label: 'Naïve Persistence interval lower bound',
                     data: weeklyLabels.map(() => null),
                     borderColor: 'transparent',
                     backgroundColor: 'transparent',
@@ -464,7 +465,7 @@
                     pointRadius: 0,
                     hidden: true
                 }, {
-                    label: 'Estimated 95% interval',
+                    label: 'Naïve Persistence estimated 95% interval',
                     data: weeklyLabels.map(() => null),
                     borderColor: 'transparent',
                     backgroundColor: 'rgba(25,135,84,0.14)',
@@ -497,7 +498,7 @@
                             label: context => {
                                 const label = context.dataset.label || '';
                                 const value = context.raw;
-                                if (label.indexOf('Projection') !== -1 && typeof value === 'number') {
+                                if ((label.indexOf('Persistence') !== -1 || label.indexOf('Forecast') !== -1 || label.indexOf('Projection') !== -1) && typeof value === 'number') {
                                     return `${label}: ${Math.round(value)}`;
                                 }
                                 return `${label}: ${context.formattedValue}`;
@@ -620,13 +621,15 @@
             forecastDataset.data = weeklyForecastData(forecasts, Number(forecast.current_week), currentCases, 'predicted_cases');
             intervalLowerDataset.data = weeklyForecastData(forecasts, Number(forecast.current_week), currentCases, 'lower_bound');
             intervalUpperDataset.data = weeklyForecastData(forecasts, Number(forecast.current_week), currentCases, 'upper_bound');
-            forecastDataset.label = forecasts.length > 1 ? 'Multi-Week Projection' : 'Next Week Projection';
+            forecastDataset.label = forecasts.length > 1
+                ? 'Naïve Persistence Multi-Week Projection'
+                : 'Naïve Persistence Forecast';
             forecastDataset.hidden = activePeriod !== 'weekly';
-            intervalLowerDataset.hidden = forecasts.length < 2 || activePeriod !== 'weekly';
-            intervalUpperDataset.hidden = forecasts.length < 2 || activePeriod !== 'weekly';
+            intervalLowerDataset.hidden = activePeriod !== 'weekly';
+            intervalUpperDataset.hidden = activePeriod !== 'weekly';
             const intervalNote = document.getElementById('forecast-interval-note');
             if (intervalNote) {
-                intervalNote.hidden = forecasts.length < 2 || activePeriod !== 'weekly';
+                intervalNote.hidden = activePeriod !== 'weekly';
             }
             chart.update();
         };
@@ -679,11 +682,11 @@
                 chart.data.datasets[1].data = monthly ? monthlyMedian : trend.median;
                 chart.data.datasets[2].data = monthly ? monthlyBaseline : trend.baseline_75th;
                 forecastDataset.hidden = monthly || !Array.isArray(forecastDataset.data) || !forecastDataset.data.some(value => value !== null);
-                intervalLowerDataset.hidden = monthly || Number(forecastHorizon && forecastHorizon.value) < 2;
-                intervalUpperDataset.hidden = monthly || Number(forecastHorizon && forecastHorizon.value) < 2;
+                intervalLowerDataset.hidden = monthly;
+                intervalUpperDataset.hidden = monthly;
                 const intervalNote = document.getElementById('forecast-interval-note');
                 if (intervalNote) {
-                    intervalNote.hidden = monthly || Number(forecastHorizon && forecastHorizon.value) < 2;
+                    intervalNote.hidden = monthly;
                 }
                 periodButtons.forEach(periodButton => {
                     const active = periodButton === button;

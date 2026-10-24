@@ -560,9 +560,6 @@ def dashboard_forecast_api():
             'rmse_lr': None,
             'mae_lr': None,
             'mean_error_lr': None,
-            'rmse_hybrid': None,
-            'mae_hybrid': None,
-            'mean_error_hybrid': None,
             'rmse_seasonal': None,
             'mae_seasonal': None,
             'mean_error_seasonal': None,
@@ -597,9 +594,6 @@ def dashboard_forecast_api():
             'rmse_lr': None,
             'mae_lr': None,
             'mean_error_lr': None,
-            'rmse_hybrid': None,
-            'mae_hybrid': None,
-            'mean_error_hybrid': None,
             'rmse_seasonal': None,
             'mae_seasonal': None,
             'mean_error_seasonal': None,
@@ -624,9 +618,6 @@ def dashboard_forecast_api():
             'rmse_lr': None,
             'mae_lr': None,
             'mean_error_lr': None,
-            'rmse_hybrid': None,
-            'mae_hybrid': None,
-            'mean_error_hybrid': None,
             'rmse_seasonal': None,
             'mae_seasonal': None,
             'mean_error_seasonal': None,
@@ -658,9 +649,6 @@ def dashboard_forecast_api():
             'rmse_lr': None,
             'mae_lr': None,
             'mean_error_lr': None,
-            'rmse_hybrid': None,
-            'mae_hybrid': None,
-            'mean_error_hybrid': None,
             'rmse_seasonal': None,
             'mae_seasonal': None,
             'mean_error_seasonal': None,
@@ -672,7 +660,7 @@ def dashboard_forecast_api():
     X = training_data[['lag_1', 'lag_2', 'morbidity_week']].dropna()
     y = training_data.loc[X.index, 'case_count']
 
-    # Keep Random Forest as a performance comparator; forecasts use Naive Persistence below.
+    # Benchmark models are evaluated in-sample; the operational forecast remains Naïve Persistence.
     rf_model = RandomForestRegressor(n_estimators=100, random_state=42)
     rf_model.fit(X, y)
     y_pred_rf = rf_model.predict(X)
@@ -680,7 +668,7 @@ def dashboard_forecast_api():
     mae_rf = round(float(mean_absolute_error(y, y_pred_rf)), 2)
     mean_error_rf = round(float(np.mean(y_pred_rf - y)), 2)
 
-    # Naive persistence: forecast each week using the previous week's observed count.
+    # Naïve persistence: evaluate each week using the previous week's observed count.
     y_naive = X['lag_1']
     y_actual_naive = y.loc[y_naive.index]
     rmse_naive = round(float(np.sqrt(mean_squared_error(y_actual_naive, y_naive))), 2)
@@ -696,14 +684,6 @@ def dashboard_forecast_api():
     mae_lr = round(float(mean_absolute_error(y, y_pred_lr)), 2)
     mean_error_lr = round(float(np.mean(y_pred_lr - y)), 2)
 
-    # Adjust the OLS trend by the previous observation's residual to retain
-    # short-term persistence without replacing the underlying linear trend.
-    lr_residuals = y - pd.Series(y_pred_lr, index=y.index)
-    y_pred_hybrid = pd.Series(y_pred_lr, index=y.index) + lr_residuals.shift(1).fillna(0)
-    rmse_hybrid = round(float(np.sqrt(mean_squared_error(y, y_pred_hybrid))), 2)
-    mae_hybrid = round(float(mean_absolute_error(y, y_pred_hybrid)), 2)
-    mean_error_hybrid = round(float(np.mean(y_pred_hybrid - y)), 2)
-
     # 4. Historical Seasonal Median Baseline 
     historical_medians = trend['median'] # from get_dashboard_trend()
     y_seasonal_baseline = X['morbidity_week'].apply(
@@ -714,19 +694,17 @@ def dashboard_forecast_api():
     mae_seasonal = round(float(mean_absolute_error(y, y_seasonal_baseline)), 2)
     mean_error_seasonal = round(float(np.mean(y_seasonal_baseline - y)), 2)
 
-    forecast_value = float(weekly_counts['case_count'].iloc[-1])
+    predicted_cases = round(float(weekly_counts['case_count'].iloc[-1]), 2)
     forecasts = []
     for step in range(1, horizon + 1):
         forecast_week = current_week + step
         uncertainty = 1.96 * rmse_naive * np.sqrt(step)
         forecasts.append({
             'week': forecast_week,
-            'predicted_cases': round(forecast_value, 2),
-            'lower_bound': round(max(0, forecast_value - uncertainty), 2),
-            'upper_bound': round(forecast_value + uncertainty, 2),
+            'predicted_cases': predicted_cases,
+            'lower_bound': round(max(0, predicted_cases - uncertainty), 2),
+            'upper_bound': round(predicted_cases + uncertainty, 2),
         })
-
-    predicted_cases = forecasts[0]['predicted_cases']
 
     return jsonify({
         'current_week': current_week,
@@ -743,9 +721,6 @@ def dashboard_forecast_api():
         'rmse_lr': rmse_lr,
         'mae_lr': mae_lr,
         'mean_error_lr': mean_error_lr,
-        'rmse_hybrid': rmse_hybrid,
-        'mae_hybrid': mae_hybrid,
-        'mean_error_hybrid': mean_error_hybrid,
         'rmse_seasonal': rmse_seasonal,
         'mae_seasonal': mae_seasonal,
         'mean_error_seasonal': mean_error_seasonal,
