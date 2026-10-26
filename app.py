@@ -1,3 +1,5 @@
+import calendar
+import math
 import os
 import re
 import secrets
@@ -1132,13 +1134,17 @@ def detect_upload_year(df=None, filename=''):
     return None
 
 
+OPTIONAL_NUMERIC_MISSING_VALUES = {
+    '', '#ref!', '#value!', '#n/a', 'n/a', 'na', 'nan', 'null', 'none', 'unavailable'
+}
+
+
 def parse_optional_integer(value, field_name, minimum=None, maximum=None, required=False):
-    missing_values = {'', '#ref!', '#value!', '#n/a', 'n/a', 'na', 'nan', 'null', 'none', 'unavailable'}
     if value is None or pd.isna(value):
         value = None
     elif isinstance(value, str):
         value = value.strip()
-        if value.lower() in missing_values:
+        if value.lower() in OPTIONAL_NUMERIC_MISSING_VALUES:
             value = None
 
     if value is None:
@@ -1159,6 +1165,40 @@ def parse_optional_integer(value, field_name, minimum=None, maximum=None, requir
     if maximum is not None and parsed_value > maximum:
         raise ValueError(f'{field_name} must be no greater than {maximum}.')
     return parsed_value
+
+
+def parse_optional_age(value, field_name):
+    if value is None or pd.isna(value):
+        return None
+    if isinstance(value, str):
+        value = value.strip()
+        if value.lower() in OPTIONAL_NUMERIC_MISSING_VALUES:
+            return None
+
+    try:
+        numeric_value = float(value)
+        if not math.isfinite(numeric_value):
+            raise ValueError
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f'{field_name} must be a whole number.') from None
+
+    if numeric_value < 0:
+        raise ValueError(f'{field_name} must be at least 0.')
+
+    return int(numeric_value)
+
+
+def parse_optional_month(value, field_name):
+    if isinstance(value, str):
+        month_name = value.strip().casefold()
+        for month in range(1, 13):
+            if month_name in {
+                calendar.month_name[month].casefold(),
+                calendar.month_abbr[month].casefold(),
+            }:
+                return month
+
+    return parse_optional_integer(value, field_name, minimum=1, maximum=12)
 
 
 def is_generic_case_id(value):
@@ -1205,7 +1245,7 @@ def build_standardized_upload_df(df, filename=''):
     age_source = next((normalized_columns[c] for c in age_candidates if c in normalized_columns), None)
     if age_source is not None:
         df['age'] = [
-            parse_optional_integer(value, f'Row {row_number} age', minimum=0)
+            parse_optional_age(value, f'Row {row_number} age')
             for row_number, value in enumerate(df[age_source], start=2)
         ]
     else:
@@ -1234,9 +1274,7 @@ def build_standardized_upload_df(df, filename=''):
         for row_number, value in enumerate(df[week_source], start=2)
     ] if week_source else None
     df['morbidity_month'] = [
-        parse_optional_integer(
-            value, f'Row {row_number} morbidity month', minimum=1, maximum=12
-        )
+        parse_optional_month(value, f'Row {row_number} morbidity month')
         for row_number, value in enumerate(df[month_source], start=2)
     ] if month_source else None
 

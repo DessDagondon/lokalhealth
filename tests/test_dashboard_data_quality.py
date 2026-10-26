@@ -112,6 +112,28 @@ class DashboardDataQualityTest(unittest.TestCase):
         self.assertEqual(result.loc[0, 'morbidity_week'], 12)
         self.assertTrue(pd.isna(result.loc[0, 'year']))
 
+    def test_named_morbidity_months_are_normalized(self):
+        source = pd.DataFrame([
+            {'Case ID': 'MONTH-NAME-1', 'Morbidity Month': 'DECEMBER'},
+            {'Case ID': 'MONTH-NAME-2', 'Morbidity Month': 'October'},
+            {'Case ID': 'MONTH-NAME-3', 'Morbidity Month': 'May'},
+        ])
+
+        result = build_standardized_upload_df(source, filename='cases.csv')
+
+        self.assertEqual(result['morbidity_month'].tolist(), [12, 10, 5])
+
+    def test_fractional_age_years_are_stored_as_completed_years(self):
+        source = pd.DataFrame([
+            {'Case ID': 'FRACTIONAL-AGE-1', 'Age in Years': 0.01},
+            {'Case ID': 'FRACTIONAL-AGE-2', 'Age in Years': 0.99},
+            {'Case ID': 'FRACTIONAL-AGE-3', 'Age in Years': 24.75},
+        ])
+
+        result = build_standardized_upload_df(source, filename='cases.xlsx')
+
+        self.assertEqual(result['age'].tolist(), [0, 0, 24])
+
     def test_invalid_age_and_month_are_rejected_with_row_context(self):
         invalid_age = pd.DataFrame([{
             'Case ID': 'INVALID-AGE',
