@@ -296,25 +296,75 @@ NULL_LIKE_VALUES = {'', 'nan', 'n/a', 'na', 'null', 'none', 'unavailable'}
 def is_available_dashboard_value(value):
     return value is not None and str(value).strip().lower() not in NULL_LIKE_VALUES
 
+
+def classify_dashboard_case(value):
+    if not is_available_dashboard_value(value):
+        return 'other'
+    classification = re.sub(r'[^a-z]+', ' ', str(value).strip().lower()).strip()
+    words = set(classification.split())
+    if 'unconfirmed' in words or 'not confirmed' in classification:
+        return 'other'
+    if 'confirmed' in words:
+        return 'confirmed'
+    if 'suspected' in words or 'suspect' in words:
+        return 'suspected'
+    return 'other'
+
+
 @app.route('/test-load')
 @login_required
 def load_dashboard():
     # Log memory before/after loading heavy templates or data
     log_memory_usage("During Dashboard Load")
-    return render_template('dashboard.html', user=current_user)
+    return redirect(url_for('dashboard'))
 
 def get_dashboard_years():
-    return [
-        int(year)
-        for year, in db.session.query(DengueRecord.year)
-        .filter(
-            DengueRecord.year.isnot(None),
+    years = {
+        year
+        for (raw_year,) in db.session.query(DengueRecord.year).filter(
             DengueRecord.is_archived.is_(False),
-        )
-        .distinct()
-        .order_by(DengueRecord.year.asc())
-        .all()
-    ]
+        ).distinct()
+        if (year := parse_dashboard_integer(raw_year, minimum=1900, maximum=2100)) is not None
+    }
+    return sorted(years)
+
+
+def parse_dashboard_integer(value, minimum=None, maximum=None):
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, str) and value.strip().lower() in NULL_LIKE_VALUES:
+        return None
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(numeric_value) or not numeric_value.is_integer():
+        return None
+    integer_value = int(numeric_value)
+    if minimum is not None and integer_value < minimum:
+        return None
+    if maximum is not None and integer_value > maximum:
+        return None
+    return integer_value
+
+
+def calculate_dashboard_quantile(values, quantile):
+    valid_values = sorted(
+        numeric_value
+        for value in values
+        if (numeric_value := parse_dashboard_integer(value, minimum=0)) is not None
+    )
+    if not valid_values:
+        return 0
+    position = (len(valid_values) - 1) * quantile
+    lower_index = math.floor(position)
+    upper_index = math.ceil(position)
+    interpolated = (
+        valid_values[lower_index]
+        + (valid_values[upper_index] - valid_values[lower_index])
+        * (position - lower_index)
+    )
+    return round(interpolated, 2)
 
 def get_morbidity_week_date_range(year, morbidity_week):
     year_start = date(year, 1, 1)
@@ -326,13 +376,6 @@ def get_morbidity_week_date_range(year, morbidity_week):
     return f'{start_label} \u2013 {end_label}'
 
 def evaluate_dashboard_alert(current_count, median_threshold, epidemic_threshold):
-    if current_count == 0 and median_threshold == 0 and epidemic_threshold == 0:
-        return {
-            'risk_level': 'GREEN',
-            'risk_label': 'Below Alert Threshold',
-            'recommendation': 'No baseline cases available for comparison.',
-            'action_required': 'Action Required: Continue routine monitoring while awaiting reported case data.',
-        }
     if current_count < median_threshold:
         return {
             'risk_level': 'GREEN',
@@ -365,55 +408,57 @@ def get_intervention_priority(active_cases, median_threshold, epidemic_threshold
     }[alert['risk_level']]
 
 def get_dashboard_trend(current_year=None):
-    current_year = current_year or datetime.now().year
+    current_year = parse_dashboard_integer(
+        current_year or datetime.now().year,
+        minimum=1900,
+        maximum=2100,
+    ) or datetime.now().year
     baseline_years = tuple(
         year for year in get_dashboard_years() if year < current_year
     )[-3:]
-    def calculate_quantile(values, quantile):
-        return round(pd.Series(values, dtype='float64').quantile(quantile), 2) if values else 0
-
     relevant_years = baseline_years + (current_year,)
-    reported_week_rows = db.session.query(
+    dashboard_rows = db.session.query(
         DengueRecord.year,
         DengueRecord.morbidity_week,
-        db.func.count(DengueRecord.id),
+        DengueRecord.morbidity_month,
+        DengueRecord.case_classification,
     ).filter(
         DengueRecord.year.in_(relevant_years),
-        DengueRecord.morbidity_week.between(1, 52),
         DengueRecord.is_archived.is_(False),
-    ).group_by(DengueRecord.year, DengueRecord.morbidity_week).all()
+    ).all()
     reported_weeks_by_year = {}
-    for year, week, record_count in reported_week_rows:
-        if year is not None and week is not None:
-            reported_weeks_by_year.setdefault(int(year), set()).add(int(week))
+    reported_months_by_year = {}
+    counts_by_year_week = {}
+    counts_by_year_month = {}
+    for raw_year, raw_week, raw_month, classification in dashboard_rows:
+        year = parse_dashboard_integer(raw_year, minimum=1900, maximum=2100)
+        if year not in relevant_years:
+            continue
+        week = parse_dashboard_integer(raw_week, minimum=1, maximum=52)
+        month = parse_dashboard_integer(raw_month, minimum=1, maximum=12)
+        if week is not None:
+            reported_weeks_by_year.setdefault(year, set()).add(week)
+        if month is not None:
+            reported_months_by_year.setdefault(year, set()).add(month)
+        if classify_dashboard_case(classification) != 'confirmed':
+            continue
+        if week is not None:
+            key = (year, week)
+            counts_by_year_week[key] = counts_by_year_week.get(key, 0) + 1
+        if month is not None:
+            key = (year, month)
+            counts_by_year_month[key] = counts_by_year_month.get(key, 0) + 1
 
     weekly_baseline_years = tuple(
         year for year in baseline_years if year in reported_weeks_by_year
     )
-    weekly_years = weekly_baseline_years + (current_year,)
-    grouped_counts = db.session.query(
-        DengueRecord.year,
-        DengueRecord.morbidity_week,
-        db.func.count(DengueRecord.id),
-    ).filter(
-        DengueRecord.year.in_(weekly_years),
-        DengueRecord.morbidity_week.between(1, 52),
-        DengueRecord.is_archived.is_(False),
-        DengueRecord.case_classification.ilike('%confirmed%')
-    ).group_by(DengueRecord.year, DengueRecord.morbidity_week).all()
-
-    counts_by_year_week = {
-        (int(year), int(week)): int(count)
-        for year, week, count in grouped_counts
-        if year is not None and week is not None
-    }
     current_reported_weeks = reported_weeks_by_year.get(current_year, set())
     current_week_data_available = current_year in reported_weeks_by_year
     # Stop the actuals line after the latest week present in the data.
-    max_reported_week = max(current_reported_weeks) if current_reported_weeks else 52
     current_actual = [
         counts_by_year_week.get((current_year, week), 0)
-        if week <= max_reported_week else None
+        if week in current_reported_weeks
+        else None
         for week in range(1, 53)
     ]
     if not current_week_data_available:
@@ -425,37 +470,9 @@ def get_dashboard_trend(current_year=None):
         ]
         for week in range(1, 53)
     ]
-    median = [calculate_quantile(values, 0.5) for values in historical_values]
-    percentile_75 = [calculate_quantile(values, 0.75) for values in historical_values]
+    median = [calculate_dashboard_quantile(values, 0.5) for values in historical_values]
+    percentile_75 = [calculate_dashboard_quantile(values, 0.75) for values in historical_values]
 
-    reported_month_rows = db.session.query(
-        DengueRecord.year,
-        DengueRecord.morbidity_month,
-    ).filter(
-        DengueRecord.year.in_(relevant_years),
-        DengueRecord.morbidity_month.between(1, 12),
-        DengueRecord.is_archived.is_(False),
-    ).distinct().all()
-    reported_months_by_year = {}
-    for year, month in reported_month_rows:
-        if year is not None and month is not None:
-            reported_months_by_year.setdefault(int(year), set()).add(int(month))
-    grouped_month_counts = db.session.query(
-        DengueRecord.year,
-        DengueRecord.morbidity_month,
-        db.func.count(DengueRecord.id),
-    ).filter(
-        DengueRecord.year.in_(relevant_years),
-        DengueRecord.morbidity_month.isnot(None),
-        DengueRecord.morbidity_month.between(1, 12),
-        DengueRecord.is_archived.is_(False),
-        DengueRecord.case_classification.ilike('%confirmed%'),
-    ).group_by(DengueRecord.year, DengueRecord.morbidity_month).all()
-    counts_by_year_month = {
-        (int(year), int(month)): int(count)
-        for year, month, count in grouped_month_counts
-        if year is not None and month is not None
-    }
     current_reported_months = reported_months_by_year.get(current_year, set())
     monthly_actual = [
         counts_by_year_month.get((current_year, month), 0)
@@ -470,9 +487,13 @@ def get_dashboard_trend(current_year=None):
         ]
         for month in range(1, 13)
     ]
-    monthly_median = [calculate_quantile(values, 0.5) for values in monthly_baseline_values]
+    monthly_median = [
+        calculate_dashboard_quantile(values, 0.5)
+        for values in monthly_baseline_values
+    ]
     monthly_percentile_75 = [
-        calculate_quantile(values, 0.75) for values in monthly_baseline_values
+        calculate_dashboard_quantile(values, 0.75)
+        for values in monthly_baseline_values
     ]
 
     active_year = datetime.now().year
@@ -569,65 +590,58 @@ def dashboard_forecast_api():
             'forecasts': [],
         })
 
-    grouped_counts = db.session.query(
+    def naive_only_response(current_cases):
+        prediction = current_cases if trend['weekly_data_available'] else None
+        forecasts = [
+            {
+                'week': current_week + step,
+                'predicted_cases': prediction,
+                'lower_bound': prediction,
+                'upper_bound': prediction,
+            }
+            for step in range(1, horizon + 1)
+        ] if prediction is not None else []
+        return jsonify({
+            'current_week': current_week,
+            'target_week': target_week,
+            'current_cases': current_cases,
+            'predicted_cases': prediction,
+            'diff': 0 if prediction is not None else None,
+            'rmse_rf': None,
+            'mae_rf': None,
+            'mean_error_rf': None,
+            'rmse_naive': None,
+            'mae_naive': None,
+            'mean_error_naive': None,
+            'rmse_lr': None,
+            'mae_lr': None,
+            'mean_error_lr': None,
+            'rmse_seasonal': None,
+            'mae_seasonal': None,
+            'mean_error_seasonal': None,
+            'mean_error': None,
+            'forecasts': forecasts,
+        })
+
+    confirmed_week_rows = db.session.query(
         DengueRecord.morbidity_week,
-        db.func.count(DengueRecord.id),
+        DengueRecord.case_classification,
     ).filter(
         DengueRecord.year == current_year,
-        DengueRecord.morbidity_week.isnot(None),
-        DengueRecord.morbidity_week.between(1, 52),
         DengueRecord.is_archived.is_(False),
-        DengueRecord.case_classification.ilike('%confirmed%')
-    ).group_by(DengueRecord.morbidity_week).order_by(DengueRecord.morbidity_week).all()
+    ).all()
+    counts_by_week = {}
+    for raw_week, classification in confirmed_week_rows:
+        if classify_dashboard_case(classification) != 'confirmed':
+            continue
+        week = parse_dashboard_integer(raw_week, minimum=1, maximum=52)
+        if week is not None:
+            counts_by_week[week] = counts_by_week.get(week, 0) + 1
+    latest_cases = counts_by_week.get(current_week, 0)
 
-    if len(grouped_counts) < 4:
-        return jsonify({
-            'current_week': current_week,
-            'target_week': target_week,
-            'current_cases': None,
-            'predicted_cases': None,
-            'diff': None,
-            'rmse_rf': None,
-            'mae_rf': None,
-            'mean_error_rf': None,
-            'rmse_naive': None,
-            'mae_naive': None,
-            'mean_error_naive': None,
-            'rmse_lr': None,
-            'mae_lr': None,
-            'mean_error_lr': None,
-            'rmse_seasonal': None,
-            'mae_seasonal': None,
-            'mean_error_seasonal': None,
-            'mean_error': None,
-            'forecasts': [],
-        })
+    if len(counts_by_week) < 4:
+        return naive_only_response(latest_cases)
 
-    counts_by_week = {int(week): int(count) for week, count in grouped_counts}
-    if current_week not in counts_by_week:
-        return jsonify({
-            'current_week': current_week,
-            'target_week': target_week,
-            'current_cases': None,
-            'predicted_cases': None,
-            'diff': None,
-            'rmse_rf': None,
-            'mae_rf': None,
-            'mean_error_rf': None,
-            'rmse_naive': None,
-            'mae_naive': None,
-            'mean_error_naive': None,
-            'rmse_lr': None,
-            'mae_lr': None,
-            'mean_error_lr': None,
-            'rmse_seasonal': None,
-            'mae_seasonal': None,
-            'mean_error_seasonal': None,
-            'mean_error': None,
-            'forecasts': [],
-        })
-
-    latest_cases = counts_by_week[current_week]
     weekly_counts = pd.DataFrame({
         'morbidity_week': list(range(1, current_week + 1)),
         'case_count': [counts_by_week.get(week, 0) for week in range(1, current_week + 1)],
@@ -636,27 +650,7 @@ def dashboard_forecast_api():
     weekly_counts['lag_2'] = weekly_counts['case_count'].shift(2)
     training_data = weekly_counts.dropna()
     if training_data.empty:
-        return jsonify({
-            'current_week': current_week,
-            'target_week': target_week,
-            'current_cases': latest_cases,
-            'predicted_cases': None,
-            'diff': None,
-            'rmse_rf': None,
-            'mae_rf': None,
-            'mean_error_rf': None,
-            'rmse_naive': None,
-            'mae_naive': None,
-            'mean_error_naive': None,
-            'rmse_lr': None,
-            'mae_lr': None,
-            'mean_error_lr': None,
-            'rmse_seasonal': None,
-            'mae_seasonal': None,
-            'mean_error_seasonal': None,
-            'mean_error': None,
-            'forecasts': [],
-        })
+        return naive_only_response(latest_cases)
 
     # 1. Prepare Features & Target
     X = training_data[['lag_1', 'lag_2', 'morbidity_week']].dropna()
@@ -733,84 +727,108 @@ def dashboard_forecast_api():
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    page = request.args.get('page', 1, type=int)
-    page = max(page, 1)
     requested_year = request.args.get('year', type=int)
     available_years = get_dashboard_years()
-    selected_year = requested_year if requested_year in available_years else (available_years[-1] if available_years else datetime.now().year)
+    selected_year = (
+        requested_year if requested_year in available_years
+        else available_years[-1] if available_years
+        else datetime.now().year
+    )
 
-    records_list = DengueRecord.query.filter(
-        DengueRecord.year == selected_year,
-        DengueRecord.is_archived.is_(False),
-    ).all()
+    records_list = [
+        record
+        for record in DengueRecord.query.filter(
+            DengueRecord.year == selected_year,
+            DengueRecord.is_archived.is_(False),
+        ).all()
+        if parse_dashboard_integer(
+            record.year,
+            minimum=1900,
+            maximum=2100,
+        ) == selected_year
+    ]
     confirmed_records = [
         record for record in records_list
-        if is_available_dashboard_value(record.case_classification)
-        and 'confirmed' in str(record.case_classification).lower()
+        if classify_dashboard_case(record.case_classification) == 'confirmed'
+    ]
+    suspected_records = [
+        record for record in records_list
+        if classify_dashboard_case(record.case_classification) == 'suspected'
     ]
     confirmed_cases = len(confirmed_records)
-    district_options = sorted({
-        str(record.district).strip()
-        for record in records_list
-        if is_available_dashboard_value(record.district)
-    })
-    # Calculate trend and active morbidity week
     trend = get_dashboard_trend(selected_year)
-    active_week = trend['current_week']
-
-    # Keep the watchlist focused on confirmed cases in the latest recorded week.
-    barangay_counts = {}
-    watchlist_locations = {}
-    for record in confirmed_records:
-        if is_available_dashboard_value(record.barangay):
-            barangay = str(record.barangay).strip()
-            barangay_counts[barangay] = barangay_counts.get(barangay, 0) + 1
-            district = (
-                str(record.district).strip()
-                if is_available_dashboard_value(record.district) else ''
+    active_week = trend['current_week'] if trend['weekly_data_available'] else None
+    case_counts_by_location_week = {}
+    recorded_weeks_by_location = {}
+    for record in records_list:
+        week = parse_dashboard_integer(record.morbidity_week, minimum=1, maximum=52)
+        if week is None or not is_available_dashboard_value(record.barangay):
+            continue
+        location = (
+            str(record.district).strip()
+            if is_available_dashboard_value(record.district) else '',
+            str(record.barangay).strip(),
+        )
+        recorded_weeks_by_location.setdefault(location, set()).add(week)
+        if classify_dashboard_case(record.case_classification) == 'confirmed':
+            key = (location, week)
+            case_counts_by_location_week[key] = (
+                case_counts_by_location_week.get(key, 0) + 1
             )
-            location = watchlist_locations.setdefault(
-                (district, barangay),
-                {'active_cases': 0, 'total_ytd': 0},
-            )
-            location['total_ytd'] += 1
-            try:
-                rec_week = int(record.morbidity_week) if record.morbidity_week else None
-            except (ValueError, TypeError):
-                rec_week = None
-            if rec_week == active_week:
-                location['active_cases'] += 1
 
-    historical_watchlist_rows = []
+    weekly_locations = {
+        location
+        for location, weeks in recorded_weeks_by_location.items()
+        if active_week is not None and active_week in weeks
+    }
+    active_location_counts = {
+        location: case_counts_by_location_week.get((location, active_week), 0)
+        for location in weekly_locations
+    }
+    current_week_suspected = sum(
+        1
+        for record in records_list
+        if parse_dashboard_integer(record.morbidity_week, minimum=1, maximum=52) == active_week
+        and classify_dashboard_case(record.case_classification) == 'suspected'
+    ) if active_week is not None else 0
+    previous_week = active_week - 1 if active_week is not None and active_week > 1 else None
+
     watchlist_baseline_years = tuple(trend['baseline_years'])
+    historical_watchlist_rows = []
     if active_week is not None and watchlist_baseline_years:
         historical_watchlist_rows = db.session.query(
             DengueRecord.year,
+            DengueRecord.morbidity_week,
             DengueRecord.district,
             DengueRecord.barangay,
-            db.func.count(DengueRecord.id),
+            DengueRecord.case_classification,
         ).filter(
             DengueRecord.year.in_(watchlist_baseline_years),
-            DengueRecord.morbidity_week == active_week,
             DengueRecord.is_archived.is_(False),
-            DengueRecord.case_classification.ilike('%confirmed%'),
-            DengueRecord.barangay.isnot(None),
-        ).group_by(
-            DengueRecord.year,
-            DengueRecord.district,
-            DengueRecord.barangay,
         ).all()
     historical_watchlist_counts = {}
-    for year, district, barangay, count in historical_watchlist_rows:
+    for raw_year, raw_week, district, barangay, classification in historical_watchlist_rows:
+        year = parse_dashboard_integer(raw_year, minimum=1900, maximum=2100)
+        week = parse_dashboard_integer(raw_week, minimum=1, maximum=52)
+        if (
+            year not in watchlist_baseline_years
+            or week != active_week
+            or classify_dashboard_case(classification) != 'confirmed'
+            or not is_available_dashboard_value(barangay)
+        ):
+            continue
         key = (
             str(district).strip() if is_available_dashboard_value(district) else '',
             str(barangay).strip(),
         )
-        historical_watchlist_counts.setdefault(key, {})[int(year)] = int(count)
+        year_counts = historical_watchlist_counts.setdefault(key, {})
+        year_counts[year] = year_counts.get(year, 0) + 1
 
-    clusters = sorted(barangay_counts)
     watchlist = []
-    for (district, barangay), counts in watchlist_locations.items():
+    for district, barangay in weekly_locations:
+        active_cases = active_location_counts[(district, barangay)]
+        if active_cases == 0:
+            continue
         historical_counts_by_year = historical_watchlist_counts.get(
             (district, barangay), {}
         )
@@ -819,131 +837,74 @@ def dashboard():
             for year in watchlist_baseline_years
         ]
         median_threshold = (
-            float(pd.Series(historical_counts, dtype='float64').quantile(0.5))
-            if historical_counts else None
+            calculate_dashboard_quantile(historical_counts, 0.5)
+            if watchlist_baseline_years else None
         )
         epidemic_threshold = (
-            float(pd.Series(historical_counts, dtype='float64').quantile(0.75))
-            if historical_counts else None
+            calculate_dashboard_quantile(historical_counts, 0.75)
+            if watchlist_baseline_years else None
         )
         status, status_color = get_intervention_priority(
-            counts['active_cases'],
+            active_cases,
             median_threshold,
             epidemic_threshold,
         )
+        has_previous_week = (
+            previous_week is not None
+            and previous_week in recorded_weeks_by_location[(district, barangay)]
+        )
+        previous_cases = case_counts_by_location_week.get(
+            ((district, barangay), previous_week), 0
+        ) if has_previous_week else None
+        week_change = active_cases - previous_cases if has_previous_week else None
         watchlist.append({
             'name': barangay,
             'district': district,
-            'active_cases': counts['active_cases'],
-            'total_ytd': counts['total_ytd'],
+            'active_cases': active_cases,
             'median': median_threshold,
             'baseline_75th': epidemic_threshold,
             'status': status,
             'status_color': status_color,
+            'risk_rank': {
+                'danger': 1,
+                'warning': 2,
+                'success': 3,
+            }.get(status_color, 4),
+            'week_change': week_change,
         })
     watchlist.sort(
-        key=lambda item: (item['active_cases'], item['total_ytd']),
-        reverse=True,
+        key=lambda item: (
+            item['risk_rank'],
+            item['week_change'] is None,
+            -(item['week_change'] or 0),
+            -item['active_cases'],
+            item['name'].casefold(),
+            item['district'].casefold(),
+        )
     )
-
-    # Age distribution calculations
-    age_distribution = {
-        '0-17': 0,
-        '18-34': 0,
-        '35-54': 0,
-        '55+': 0,
-    }
-    for record in confirmed_records:
-        if record.age is None or str(record.age).strip().lower() in NULL_LIKE_VALUES:
-            age_distribution['Unavailable'] = age_distribution.get('Unavailable', 0) + 1
-            continue
-        try:
-            age = int(record.age)
-        except (TypeError, ValueError):
-            age_distribution['Unavailable'] = age_distribution.get('Unavailable', 0) + 1
-            continue
-        bucket = '0-17' if age < 18 else '18-34' if age < 35 else '35-54' if age < 55 else '55+'
-        age_distribution[bucket] += 1
-
-    sex_distribution = {'Male': 0, 'Female': 0, 'Other / unavailable': 0}
-    for record in confirmed_records:
-        sex = str(record.sex or '').strip().lower()
-        if sex in {'m', 'male'}:
-            sex_distribution['Male'] += 1
-        elif sex in {'f', 'female'}:
-            sex_distribution['Female'] += 1
-        else:
-            sex_distribution['Other / unavailable'] += 1
-
-    clinical_breakdown = {
-        'Severe': 0,
-        'Non-severe': 0,
-        'Unavailable': 0,
-    }
-    case_breakdown = {
-        'Confirmed': 0,
-        'Suspected': 0,
-        'Other / unavailable': 0,
-    }
-    for record in records_list:
-        clinical_classification = str(record.clinical_classification or '').strip().lower()
-        if not is_available_dashboard_value(clinical_classification):
-            clinical_breakdown['Unavailable'] += 1
-        elif 'severe' in clinical_classification and 'non-severe' not in clinical_classification:
-            clinical_breakdown['Severe'] += 1
-        else:
-            clinical_breakdown['Non-severe'] += 1
-
-        case_classification = str(record.case_classification or '').strip().lower()
-        if not is_available_dashboard_value(case_classification):
-            case_breakdown['Other / unavailable'] += 1
-        elif 'confirmed' in case_classification:
-            case_breakdown['Confirmed'] += 1
-        elif 'suspected' in case_classification:
-            case_breakdown['Suspected'] += 1
-        else:
-            case_breakdown['Other / unavailable'] += 1
-
-    # Pagination logic
-    per_page = 10
-    total_clusters = len(clusters)
-    total_pages = max(1, (total_clusters + per_page - 1) // per_page) if clusters else 1
-    page = min(page, total_pages)
-    start = (page - 1) * per_page
-    end = start + per_page
-    cluster_page = [
-        {'name': barangay, 'count': barangay_counts[barangay]}
-        for barangay in clusters[start:end]
-    ]
-
-    morbidity_week_trends = [
-        {'week': week, 'count': count}
-        for week, count in zip(trend['weeks'], trend['actual'])
-    ]
 
     return render_template(
         'dashboard.html',
-        user=current_user,
-        total_cases=len(records_list),
+        total_records=len(records_list),
         confirmed_cases=confirmed_cases,
-        clusters=cluster_page,
-        all_clusters=clusters,
-        barangay_counts=barangay_counts,
-        total_clusters=total_clusters,
-        page=page,
-        total_pages=total_pages,
-        morbidity_week_trends=morbidity_week_trends,
+        suspected_cases=len(suspected_records),
+        current_week_confirmed=trend['current_count'],
+        current_week_suspected=current_week_suspected,
+        reporting_location_count=len(weekly_locations),
         trend=trend,
-        age_distribution=age_distribution,
-        sex_distribution=sex_distribution,
-        clinical_breakdown=clinical_breakdown,
-        case_breakdown=case_breakdown,
         available_years=available_years,
         selected_year=selected_year,
         watchlist=watchlist,
-        district_options=district_options,
+        district_options=sorted({
+            district for district, _ in weekly_locations if district
+        }),
         active_week=active_week,
-        watchlist_period_label='YTD' if selected_year == datetime.now().year else 'Annual',
+        risk_counts={
+            'red': sum(item['risk_rank'] == 1 for item in watchlist),
+            'yellow': sum(item['risk_rank'] == 2 for item in watchlist),
+            'green': sum(item['risk_rank'] == 3 for item in watchlist),
+            'baseline_unavailable': sum(item['risk_rank'] == 4 for item in watchlist),
+        },
     )
 
 # Screen 3: Data Entry, CSV Ingestion, and Offline Sync

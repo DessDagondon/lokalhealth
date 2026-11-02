@@ -20,6 +20,9 @@ __pycache__/
 
 *.xlsx
 *.csv
+!tests/fixtures/functional-cases.csv
 
 ml_experiments._1.ipynb
 
+runtime-validation-report.md
+tests/fixtures/functional-cases.csv

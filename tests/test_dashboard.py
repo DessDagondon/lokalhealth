@@ -39,6 +39,18 @@ class DashboardWarningStateTest(unittest.TestCase):
                     case_number += 1
             db.session.commit()
 
+    def test_legacy_dashboard_load_route_redirects_to_complete_dashboard(self):
+        with app.test_client() as client:
+            client.post(
+                '/login',
+                data={'username': 'dashboardtester', 'password': 'pass'},
+                follow_redirects=False,
+            )
+            response = client.get('/test-load', follow_redirects=False)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers['Location'], '/dashboard')
+
     def test_2024_dashboard_uses_prior_year_threshold(self):
         with app.test_client() as client:
             login = client.post(
@@ -51,9 +63,9 @@ class DashboardWarningStateTest(unittest.TestCase):
             response = client.get('/dashboard?year=2024')
             body = response.get_data(as_text=True)
             self.assertEqual(response.status_code, 200)
-            self.assertIn('Early warning status for MW', body)
-            self.assertIn('Historical Median (P', body)
-            self.assertIn('Epidemic Threshold (P', body)
+            self.assertIn('Weekly confirmed cases', body)
+            self.assertIn('Historical median · P50', body)
+            self.assertIn('Upper threshold · P75', body)
 
             trend = client.get('/api/dashboard/trend?year=2024').get_json()
             current_week = min(datetime.now().isocalendar().week, 52) - 1
@@ -127,8 +139,8 @@ class DashboardWarningStateTest(unittest.TestCase):
             response = client.get('/dashboard?year=2023')
             body = response.get_data(as_text=True)
             self.assertEqual(response.status_code, 200)
-            self.assertIn('BLUE - Historical Baseline', body)
-            self.assertIn('30 reported cases', body)
+            self.assertIn('Historical Baseline', body)
+            self.assertIn('30 confirmed and 0 suspected case records in the latest recorded week', body)
 
             trend = client.get('/api/dashboard/trend?year=2023').get_json()
             current_week = min(datetime.now().isocalendar().week, 52) - 1
@@ -177,12 +189,9 @@ class DashboardWarningStateTest(unittest.TestCase):
             dashboard_body = dashboard.get_data(as_text=True)
             self.assertEqual(dashboard.status_code, 200)
             self.assertIn('2026', dashboard_body)
-            self.assertIn('TOTAL CONFIRMED CASES', dashboard_body)
-            self.assertIn('10 pediatric (0-17)', dashboard_body)
-            self.assertIn('DEMOGRAPHICS', dashboard_body)
-            self.assertIn('Male', dashboard_body)
-            self.assertIn('Clinical classification', dashboard_body)
-            self.assertIn('Epidemic Threshold (P', dashboard_body)
+            self.assertIn('10 confirmed', dashboard_body)
+            self.assertIn('Weekly confirmed cases', dashboard_body)
+            self.assertIn('Upper threshold · P75', dashboard_body)
 
             expected_levels = {
                 2023: 'BLUE',
@@ -196,8 +205,8 @@ class DashboardWarningStateTest(unittest.TestCase):
                 self.assertEqual(trend['actual'][showcase_week_index], {2023: 20, 2024: 15, 2025: 30, 2026: 10}[year])
                 self.assertEqual(trend['risk_level'], expected_level)
 
-            self.assertIn('10 reported cases', dashboard_body)
-            self.assertIn('GREEN - Below Alert Threshold', dashboard_body)
+            self.assertIn('10 confirmed and 0 suspected case records in the latest recorded week', dashboard_body)
+            self.assertIn('above this level is the red tier', dashboard_body)
 
     def test_forecast_api_returns_multiweek_projection_and_comparison_metrics(self):
         forecast_year = datetime.now().year
@@ -278,15 +287,18 @@ class DashboardWarningStateTest(unittest.TestCase):
                 follow_redirects=False,
             )
             dashboard = client.get('/dashboard').get_data(as_text=True)
-        self.assertIn('Random Forest', dashboard)
-        self.assertIn('Naïve Persistence Forecasting', dashboard)
-        self.assertIn('Linear Regression', dashboard)
-        self.assertIn('Seasonal Median', dashboard)
-        self.assertIn('table-primary', dashboard)
-        self.assertIn('Severe 1', dashboard)
-        self.assertIn('Suspected 1', dashboard)
-        self.assertIn('Male 1', dashboard)
-        self.assertIn('Female 3', dashboard)
+        self.assertIn('Naïve persistence', dashboard)
+        self.assertIn('ONE-WEEK AHEAD', dashboard)
+        self.assertIn('Naïve forecast · next week', dashboard)
+        self.assertIn('forecastPointIndex', dashboard)
+        self.assertIn('Naïve persistence · one-week forecast (not observed)', dashboard)
+        self.assertIn('How to use these results', dashboard)
+        self.assertIn('It does not learn a trend or estimate the probability of an epidemic', dashboard)
+        self.assertIn('not 100% certain', dashboard)
+        self.assertIn('awareness signals for possible dengue activity', dashboard)
+        self.assertIn('official outbreak declaration', dashboard)
+        self.assertNotIn('ACTIVE CLUSTERS', dashboard)
+        self.assertNotIn('DEMOGRAPHICS', dashboard)
 
 
 if __name__ == '__main__':

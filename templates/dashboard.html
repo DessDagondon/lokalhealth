@@ -1,723 +1,744 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <div>
-        <h2 class="fw-bold mb-0">Surveillance Dashboard</h2>
-        <p class="text-muted small">Epidemiological Risk Tiers & Case Overview</p>
-</div>
-    <div class="d-flex align-items-end gap-3">
-        <form method="get" action="{{ url_for('dashboard') }}" class="mb-0">
-            <label for="surveillance-year" class="form-label small fw-bold text-muted mb-1">Surveillance Year</label>
-            <select id="surveillance-year" name="year" class="form-select form-select-sm" onchange="this.form.submit()" {% if not available_years %}disabled{% endif %}>
+{% set risk_classes = {'GREEN': 'green', 'YELLOW': 'yellow', 'RED': 'red', 'BLUE': 'neutral'} %}
+{% set risk_class = risk_classes.get(trend.risk_level, 'neutral') %}
+
+<div class="surveillance-dashboard">
+    <header class="dashboard-header">
+        <div>
+            <p class="dashboard-eyebrow">LOCAL DENGUE SURVEILLANCE</p>
+            <h1>Dengue overview</h1>
+            <p class="dashboard-subtitle">Weekly confirmed cases, historical thresholds, and barangays to review.</p>
+        </div>
+        <form method="get" action="{{ url_for('dashboard') }}" class="year-filter">
+            <label for="surveillance-year">Surveillance year</label>
+            <select id="surveillance-year" name="year" class="form-select" onchange="this.form.submit()" {% if not available_years %}disabled{% endif %}>
                 {% for year in available_years|reverse %}
                 <option value="{{ year }}" {% if year == selected_year %}selected{% endif %}>{{ year }}</option>
                 {% else %}
-                <option selected>{{ selected_year }}</option>
+                <option value="{{ selected_year }}" selected>{{ selected_year }}</option>
                 {% endfor %}
             </select>
         </form>
-        <span class="badge bg-primary px-3 py-2">Role: {{ current_user.role }}</span>
-    </div>
-</div>
+    </header>
 
-{% set risk_classes = {'GREEN': 'success', 'YELLOW': 'warning', 'RED': 'danger', 'BLUE': 'info'} %}
-<div class="alert alert-{{ risk_classes[trend.risk_level] }} border-0 shadow-sm mb-4" role="status">
-    <div class="alert-banner-content">
-        <div class="alert-left-content">
-            <span class="badge text-bg-{{ risk_classes[trend.risk_level] }} mb-2">{{ trend.risk_level }} - {{ trend.risk_label }}</span>
-            {% if trend.weekly_data_available %}
-            <h5 class="alert-heading mb-1 fw-bold">Early warning status for MW {{ trend.current_week }} ({{ trend.week_date_range }})</h5>
-            {% else %}
-            <h5 class="alert-heading mb-1 fw-bold">Early warning status for {{ selected_year }} (morbidity week unavailable)</h5>
+    <section class="risk-summary risk-{{ risk_class }}" aria-labelledby="risk-summary-title">
+        <div class="risk-summary-main">
+            <div class="risk-label-row">
+                <span class="risk-indicator" aria-hidden="true"></span>
+                <span class="risk-label">Citywide · {{ trend.risk_label }}</span>
+                {% if active_week %}
+                <span class="risk-week">MW {{ active_week }}</span>
+                {% endif %}
+            </div>
+            <h2 id="risk-summary-title">
+                {% if trend.weekly_data_available and trend.has_baseline_data %}
+                    {{ trend.recommendation }}
+                {% elif not trend.weekly_data_available %}
+                    Weekly status unavailable
+                {% else %}
+                    Historical reference only
+                {% endif %}
+            </h2>
+            <p class="risk-explanation">
+                {% if trend.weekly_data_available %}
+                    {{ trend.current_count }} confirmed and {{ current_week_suspected }} suspected case records in the latest recorded week.
+                    {% if trend.has_baseline_data %}
+                    Risk tier compares confirmed records with this week's historical median (P50) and upper threshold (P75).
+                    {% endif %}
+                {% else %}
+                    No usable morbidity-week records are available for {{ selected_year }}. A weekly risk tier cannot be calculated.
+                {% endif %}
+            </p>
+            {% if trend.weekly_data_available and trend.has_baseline_data %}
+            <p class="risk-action">{{ trend.action_required }}</p>
+            {% elif not trend.has_baseline_data %}
+            <p class="risk-action">A historical comparison is not available for this year.</p>
             {% endif %}
-            <div class="small">
-                {% if trend.weekly_data_available %}{{ trend.current_count }} reported cases{% else %}Weekly case count unavailable{% endif %}
-                |
-                {% if not trend.weekly_data_available %}
-                Weekly comparison unavailable
-                {% elif trend.has_baseline_data %}
-                Historical Median (P<sub>50</sub>): {{ trend.current_median }} &bull; Epidemic Threshold (P<sub>75</sub>): {{ trend.current_epidemic_threshold }}
-                {% else %}
-                Baseline N/A
-                {% endif %}
-            </div>
-            <div id="dashboard-action-required" class="small mt-1">{{ trend.action_required }}</div>
         </div>
-        <div class="alert-right-content text-end">
-            <strong class="small d-block">{{ trend.recommendation }}</strong>
-            <div id="dashboard-forecast" class="border rounded bg-white text-dark p-2 mt-2 small" data-year="{{ selected_year }}">
-                <label for="forecast-horizon" class="text-muted d-block">Forecast horizon</label>
-                <select id="forecast-horizon" class="form-select form-select-sm my-1" aria-label="Forecast horizon">
-                    <option value="1">1-Week Ahead</option>
-                    <option value="4">Multi-Week Projection</option>
-                </select>
-                <small class="text-muted d-block" title="Naïve Persistence Forecasting carries the latest observed weekly case count forward.">Naïve Persistence Forecasting &middot; latest count carried forward</small>
-                <strong id="forecast-value" title="Naïve Persistence Forecasting uses the latest observed weekly case count as the short-term operational prediction.">Loading...</strong>
-                <span id="forecast-direction" class="badge d-none mt-1" aria-live="polite"></span>
-                <button type="button" class="btn btn-link btn-sm p-0 mt-1" data-bs-toggle="modal" data-bs-target="#modelPerformanceModal">Model performance</button>
-            </div>
+        <div class="risk-summary-side">
+            {% if trend.weekly_data_available %}
+            <div class="risk-current-count">{{ trend.current_count }}</div>
+            <div class="risk-current-caption">confirmed cases · MW {{ active_week }}</div>
+            {% else %}
+            <div class="risk-current-count risk-current-na">—</div>
+            <div class="risk-current-caption">no weekly count</div>
+            {% endif %}
+            <div class="risk-date">{{ trend.week_date_range if active_week else selected_year }}</div>
         </div>
-    </div>
-</div>
+    </section>
 
-<!-- Alert Level Banner -->
-{% if total_cases > 0 %}
-<div class="alert alert-info border-0 shadow-sm d-flex align-items-center mb-4" role="alert">
-    <div>
-        <h5 class="alert-heading mb-1 fw-bold">Surveillance data available</h5>
-        <small>Review the current case records for the latest local surveillance information.</small>
-    </div>
-</div>
-{% else %}
-<div class="alert alert-secondary border-0 shadow-sm d-flex align-items-center mb-4" role="status">
-    <div>
-        <h5 class="alert-heading mb-1 fw-bold">No surveillance records available</h5>
-        <small>No case records are currently available for analysis.</small>
-    </div>
-</div>
-{% endif %}
+    <section class="metric-grid" aria-label="Latest week metrics">
+        <article class="metric-card metric-card-primary">
+            <span class="metric-label">Confirmed cases</span>
+            <strong class="metric-value">{{ current_week_confirmed if current_week_confirmed is not none else '—' }}</strong>
+            <span class="metric-caption">{% if active_week %}Latest recorded week · MW {{ active_week }}{% else %}Latest recorded week unavailable{% endif %}</span>
+        </article>
+        <article class="metric-card">
+            <span class="metric-label">Historical median · P50</span>
+            <strong class="metric-value">{{ '%g'|format(trend.current_median) if trend.has_baseline_data and trend.weekly_data_available else '—' }}</strong>
+            <span class="metric-caption">Citywide · same morbidity week · {{ trend.baseline_years|length }} baseline year(s)</span>
+        </article>
+        <article class="metric-card">
+            <span class="metric-label">Upper threshold · P75</span>
+            <strong class="metric-value">{{ '%g'|format(trend.current_epidemic_threshold) if trend.has_baseline_data and trend.weekly_data_available else '—' }}</strong>
+            <span class="metric-caption">Citywide · above this level is the red tier</span>
+        </article>
+        <article class="metric-card">
+            <span class="metric-label">Locations represented</span>
+            <strong class="metric-value">{{ reporting_location_count if active_week else '—' }}</strong>
+            <span class="metric-caption">District/barangay locations with records in MW {{ active_week if active_week else '—' }}; not a coverage rate</span>
+        </article>
+    </section>
 
-<!-- Key Metrics Cards -->
-<div class="row g-3 mb-4">
-    <div class="col-md-3">
-        <div class="card border-0 shadow-sm p-3 h-100">
-            <div class="d-flex justify-content-between align-items-center gap-2">
-                <span class="text-muted small fw-bold">CASE METRICS</span>
+    <section class="data-basis" aria-labelledby="data-basis-title">
+        <span class="data-basis-icon" aria-hidden="true">i</span>
+        <div class="data-basis-content">
+            <h2 id="data-basis-title">How to use these results</h2>
+            <div class="data-basis-grid">
+                <p><strong>What the dashboard does</strong>It summarizes the records entered, compares citywide weekly confirmed cases with historical P50/P75 thresholds, and helps prioritize barangays for review. Thresholds show how this week compares with the available historical baseline; they do not confirm an outbreak.</p>
+                <p><strong>What the naïve forecast means</strong>It carries the latest recorded week's confirmed count forward as next week's estimate. It does not learn a trend or estimate the probability of an epidemic, and its result is not 100% certain.</p>
+                <p><strong>How to act on it</strong>Treat the forecast and risk tier as awareness signals for possible dengue activity—not a guarantee, diagnosis, or official outbreak declaration. Verify recent reports and follow local health-officer guidance before making decisions.</p>
+                <p><strong>Data limitations</strong>Only confirmed cases set risk tiers; suspected cases are shown for context. The database does not track zero-case submissions. Missing current-year weeks are gaps, not confirmed zeroes; missing historical weeks are treated as zero under the thesis method.</p>
             </div>
-            <div class="btn-group btn-group-sm mt-2 w-100" role="group" aria-label="Case metrics view">
-                <button type="button" class="btn btn-primary case-view-button flex-fill" data-view="total" aria-pressed="true">Total Cases</button>
-                <button type="button" class="btn btn-outline-primary case-view-button flex-fill" data-view="breakdown" aria-pressed="false">Clinical Breakdown</button>
-            </div>
-            <div id="case-total-panel" class="pt-2">
-                <h2 class="fw-bold text-dark my-1">{{ total_cases }}</h2>
-                <span class="text-muted small">All surveillance records</span>
-                <span class="text-muted small d-block">TOTAL CONFIRMED CASES: {{ confirmed_cases }}</span>
-            </div>
-            <div id="case-breakdown-panel" class="pt-2" hidden>
-                {% set case_breakdown_total = case_breakdown.values()|sum %}
-                {% set clinical_breakdown_total = clinical_breakdown.values()|sum %}
-                <div class="small fw-semibold mb-1">Clinical classification</div>
-                <div class="progress dashboard-segment-bar mb-1" role="img" aria-label="Clinical classification breakdown">
-                    {% for label, color in [('Severe', 'danger'), ('Non-severe', 'success'), ('Unavailable', 'secondary')] %}
-                    {% set count = clinical_breakdown[label] %}
-                    {% if count > 0 %}
-                    <div class="progress-bar bg-{{ color }}" style="width: {{ (count / clinical_breakdown_total * 100) if clinical_breakdown_total else 0 }}%" title="{{ label }}: {{ count }}"></div>
-                    {% endif %}
-                    {% endfor %}
-                </div>
-                <div class="small text-muted mb-2">Severe {{ clinical_breakdown['Severe'] }} &middot; Non-severe {{ clinical_breakdown['Non-severe'] }}</div>
-                <div class="small fw-semibold mb-1">Case classification</div>
-                <div class="progress dashboard-segment-bar mb-1" role="img" aria-label="Case classification breakdown">
-                    {% for label, color in [('Confirmed', 'primary'), ('Suspected', 'warning'), ('Other / unavailable', 'secondary')] %}
-                    {% set count = case_breakdown[label] %}
-                    {% if count > 0 %}
-                    <div class="progress-bar bg-{{ color }}" style="width: {{ (count / case_breakdown_total * 100) if case_breakdown_total else 0 }}%" title="{{ label }}: {{ count }}"></div>
-                    {% endif %}
-                    {% endfor %}
-                </div>
-                <div class="small text-muted">Confirmed {{ case_breakdown['Confirmed'] }} &middot; Suspected {{ case_breakdown['Suspected'] }}</div>
-            </div>
+            <p class="data-basis-totals">Selected year {{ selected_year }} records: {{ total_records }} total · {{ confirmed_cases }} confirmed · {{ suspected_cases }} suspected.</p>
         </div>
-    </div>
-    <div class="col-md-3">
-        <div class="card border-0 shadow-sm p-3 h-100">
-            <span class="text-muted small fw-bold">ACTIVE CLUSTERS</span>
-            <h2 class="fw-bold text-warning my-1">{{ total_clusters if total_clusters is defined else all_clusters|length }}</h2>
-            <span class="text-muted small">Barangays represented in records</span>
-        </div>
-    </div>
-    <div class="col-md-4">
-        <div class="card border-0 shadow-sm p-3 h-100">
-            <div class="d-flex justify-content-between align-items-baseline">
-                <span class="text-muted small fw-bold">DEMOGRAPHICS</span>
-                <span class="small text-muted">{{ confirmed_cases }} confirmed cases</span>
-            </div>
-            {% set age_total = age_distribution.values()|sum %}
-            {% set sex_known_total = sex_distribution['Male'] + sex_distribution['Female'] %}
-            <div class="row g-3 mt-1">
-                <div class="col-7">
-                    <div class="small fw-semibold mb-1">Age distribution</div>
-                    <div class="progress dashboard-segment-bar mb-2" role="img" aria-label="Age distribution">
-                        {% for label, color in [('0-17', 'info'), ('18-34', 'primary'), ('35-54', 'success'), ('55+', 'warning'), ('Unavailable', 'secondary')] %}
-                        {% set count = age_distribution.get(label, 0) %}
-                        {% if count > 0 %}
-                        <div class="progress-bar bg-{{ color }}" style="width: {{ (count / age_total * 100) if age_total else 0 }}%" title="{{ label }}: {{ count }}"></div>
-                        {% endif %}
-                        {% endfor %}
-                    </div>
-                    <div class="d-flex flex-wrap gap-1">
-                        <span class="badge text-bg-info">0-17: {{ age_distribution['0-17'] }}</span>
-                        <span class="badge text-bg-primary">18-34: {{ age_distribution['18-34'] }}</span>
-                        <span class="badge text-bg-success">35-54: {{ age_distribution['35-54'] }}</span>
-                        <span class="badge text-bg-warning">55+: {{ age_distribution['55+'] }}</span>
-                    </div>
-                    <span class="visually-hidden">Breakdown: {{ age_distribution['0-17'] }} pediatric (0-17), {{ age_distribution['18-34'] }} young adults (18-34), {{ age_distribution['35-54'] }} adults (35-54), and {{ age_distribution['55+'] }} seniors (55+).</span>
-                </div>
-                <div class="col-5">
-                    <div class="small fw-semibold mb-1">Sex</div>
-                    <div class="progress dashboard-segment-bar mb-2" role="img" aria-label="Male and female confirmed case distribution">
-                        <div class="progress-bar bg-primary" style="width: {{ (sex_distribution['Male'] / sex_known_total * 100) if sex_known_total else 0 }}%"></div>
-                        <div class="progress-bar bg-danger" style="width: {{ (sex_distribution['Female'] / sex_known_total * 100) if sex_known_total else 0 }}%"></div>
-                    </div>
-                    <div class="d-flex flex-column gap-1 small">
-                        <span class="badge text-bg-primary text-start">Male {{ sex_distribution['Male'] }}</span>
-                        <span class="badge text-bg-danger text-start">Female {{ sex_distribution['Female'] }}</span>
-                        {% if sex_distribution['Other / unavailable'] %}
-                        <span class="text-muted">Other / unavailable {{ sex_distribution['Other / unavailable'] }}</span>
-                        {% endif %}
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-2">
-        <div class="card border-0 shadow-sm p-3 h-100">
-            <span class="text-muted small fw-bold">PENDING LOCAL SYNC</span>
-            <h2 class="fw-bold text-success my-1">0</h2>
-            <span class="text-muted small">No unsynced records tracked</span>
-        </div>
-    </div>
-</div>
+    </section>
 
-<!-- Analytics & Trend Breakdown Layout -->
-<div class="row g-3">
-    <div class="col-md-8">
-        <div class="card border-0 shadow-sm p-4 h-100">
-            <div class="d-flex justify-content-between align-items-center gap-3 flex-wrap mb-3">
-                <h5 class="fw-bold mb-0">Morbidity Trends</h5>
-                <div class="btn-group btn-group-sm" role="group" aria-label="Trend time period">
-                    <button type="button" class="btn btn-primary trend-period-button" data-period="weekly" aria-pressed="true">Weekly</button>
-                    <button type="button" class="btn btn-outline-primary trend-period-button" data-period="monthly" aria-pressed="false">Monthly</button>
-                </div>
-            </div>
-            <div id="forecast-interval-note" class="small text-muted mt-2" hidden>Naïve Persistence Forecasting projection; shaded band shows an estimated 95% uncertainty interval based on its historical error.</div>
-            <div class="bg-light rounded" style="height: 300px;">
-                <canvas id="morbidityWeekChart" data-morbidity-week-trends='{{ morbidity_week_trends | tojson }}' data-trend='{{ trend | tojson }}'></canvas>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-4">
-        <div class="card border-0 shadow-sm p-4 h-100">
-            <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap mb-3">
-                <h5 class="fw-bold mb-0">Intervention Priority Watchlist</h5>
-                <div class="d-flex align-items-center gap-2">
-                    <label for="watchlist-district" class="small text-muted mb-0">District</label>
-                    <select id="watchlist-district" class="form-select form-select-sm" aria-label="Filter intervention watchlist by district">
-                        <option value="">All districts</option>
-                        {% for district in district_options %}
-                        <option value="{{ district }}">{{ district }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-            </div>
-            <div class="list-group list-group-flush">
-                {% if not trend.weekly_data_available %}
-                <p class="text-muted mb-0">Weekly intervention priorities are unavailable because this year's records do not include morbidity weeks.</p>
-                {% else %}
-                {% for item in watchlist %}
-                <div class="list-group-item d-flex justify-content-between align-items-center bg-transparent px-0 py-2" data-watchlist-item data-district="{{ item.district }}">
-                    <div class="me-2">
-                        <div class="fw-semibold text-dark">{{ item.name }}</div>
-                        <small class="text-muted">
-                            {{ item.active_cases }} active (MW {{ active_week }}) &bull; {{ item.total_ytd }} {{ watchlist_period_label }}
-                        </small>
-                    </div>
-                    <span class="badge bg-{{ item.status_color }}">{{ item.status }}</span>
-                </div>
-                {% else %}
-                <p class="text-muted mb-0">No intervention priorities identified</p>
-                {% endfor %}
-                {% endif %}
-                <p class="text-muted mb-0" data-watchlist-no-match hidden>No intervention priorities for this district.</p>
-            </div>
-
-            <nav id="watchlist-pagination" aria-label="Intervention priority watchlist pagination" class="mt-3" hidden>
-                <div class="d-flex justify-content-center align-items-center gap-3">
-                    <button type="button" class="btn btn-outline-primary btn-sm" id="watchlist-previous">Previous</button>
-                    <span class="small text-muted" id="watchlist-page-status" aria-live="polite"></span>
-                    <button type="button" class="btn btn-outline-primary btn-sm" id="watchlist-next">Next</button>
-                </div>
-            </nav>
-        </div>
-    </div>
-</div>
-<div class="modal fade" id="modelPerformanceModal" tabindex="-1" aria-labelledby="modelPerformanceModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content border-0 shadow">
-            <div class="modal-header">
+    <div class="dashboard-content-grid">
+        <section class="panel trend-panel" aria-labelledby="weekly-trend-title">
+            <div class="panel-heading">
                 <div>
-                    <h5 class="modal-title fw-bold" id="modelPerformanceModalLabel">Model performance</h5>
-                    <div class="small text-muted">Naïve Persistence Forecasting is the primary short-term operational predictor. Other models are comparative benchmarks; lower in-sample RMSE and MAE indicate closer fit.</div>
+                    <p class="panel-kicker">HISTORICAL COMPARISON</p>
+                    <h2 id="weekly-trend-title">Weekly confirmed cases</h2>
+                    <p>Current year compared with its same-week historical baseline.</p>
                 </div>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('repository') }}">View records</a>
             </div>
-            <div class="modal-body">
-                <div class="table-responsive">
-                    <table class="table table-sm align-middle mb-2">
-                        <thead><tr><th scope="col">Model</th><th scope="col" class="text-end">RMSE</th><th scope="col" class="text-end">MAE</th><th scope="col" class="text-end">Mean Error</th></tr></thead>
-                        <tbody>
-                            <tr class="table-primary"><th scope="row" title="Primary short-term operational predictor">Naïve Persistence Forecasting</th><td id="metric-rmse-naive" class="text-end">—</td><td id="metric-mae-naive" class="text-end">—</td><td id="metric-mean-error-naive" class="text-end">—</td></tr>
-                            <tr><th scope="row">Random Forest</th><td id="metric-rmse-rf" class="text-end">—</td><td id="metric-mae-rf" class="text-end">—</td><td id="metric-mean-error-rf" class="text-end">—</td></tr>
-                            <tr><th scope="row">Linear Regression</th><td id="metric-rmse-lr" class="text-end">—</td><td id="metric-mae-lr" class="text-end">—</td><td id="metric-mean-error-lr" class="text-end">—</td></tr>
-                            <tr><th scope="row">Seasonal Median</th><td id="metric-rmse-seasonal" class="text-end">—</td><td id="metric-mae-seasonal" class="text-end">—</td><td id="metric-mean-error-seasonal" class="text-end">—</td></tr>
-                        </tbody>
-                    </table>
-                </div>
+
+            {% if trend.weekly_data_available %}
+            <div class="chart-legend" aria-label="Chart series">
+                <span><i class="legend-swatch legend-actual"></i>{{ selected_year }} confirmed</span>
+                <span><i class="legend-swatch legend-median"></i>Historical median · P50</span>
+                <span><i class="legend-swatch legend-threshold"></i>Upper threshold · P75</span>
+                <span><i class="legend-swatch legend-forecast"></i><span id="forecast-chart-legend">Naïve forecast · next week</span></span>
+            </div>
+            <div class="chart-container">
+                <canvas id="weekly-case-chart" role="img" aria-label="Weekly confirmed cases, historical P50 and P75 thresholds, and a distinct one-week naïve persistence forecast"></canvas>
+            </div>
+            <p class="chart-footnote">
+                Baseline: {{ trend.baseline_years|join(', ') if trend.baseline_years else 'not available' }}.
+                P50 is the middle ordered annual value; P75 interpolates between the second and third values when three years are available.
+            </p>
+            {% else %}
+            <div class="empty-state">
+                <strong>Weekly trend cannot be shown</strong>
+                <p>No valid morbidity weeks were found for {{ selected_year }}. Add or correct week values in the records before using weekly comparisons.</p>
+            </div>
+            {% endif %}
+        </section>
+
+        <section class="panel forecast-panel" aria-labelledby="forecast-title">
+            <p class="panel-kicker">ONE-WEEK AHEAD</p>
+            <h2 id="forecast-title">Naïve persistence</h2>
+            <p class="panel-intro">Carries the latest recorded week's confirmed count forward as next week's reference estimate. It is not a certainty or an epidemic probability.</p>
+            <div id="forecast-result" class="forecast-result" aria-live="polite">
+                {% if trend.weekly_data_available %}
+                Loading forecast…
+                {% else %}
+                Unavailable without a reported week
+                {% endif %}
+            </div>
+            <p id="forecast-detail" class="forecast-detail">
+                Use as an awareness signal for possible dengue activity; verify reports and local guidance.
+            </p>
+            <div class="forecast-method">
+                <span class="method-equation">ŷ<sub>t+1</sub> = y<sub>t</sub></span>
+                <span>Current observed count carried forward</span>
+            </div>
+        </section>
+    </div>
+
+    <section class="panel watchlist-panel" aria-labelledby="watchlist-title">
+        <div class="panel-heading watchlist-heading">
+            <div>
+                <p class="panel-kicker">BARANGAY-LEVEL REVIEW</p>
+                <h2 id="watchlist-title">Intervention priority watchlist</h2>
+                <p>Only barangays with confirmed records in the latest recorded week are listed.</p>
+            </div>
+            <div class="watchlist-filter">
+                <label for="watchlist-district">District</label>
+                <select id="watchlist-district" class="form-select form-select-sm">
+                    <option value="">All districts</option>
+                    {% for district in district_options %}
+                    <option value="{{ district }}">{{ district }}</option>
+                    {% endfor %}
+                </select>
             </div>
         </div>
-    </div>
+
+        {% if watchlist %}
+        <div class="table-responsive">
+            <table class="table watchlist-table align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th scope="col">Priority</th>
+                        <th scope="col">Barangay</th>
+                        <th scope="col" class="text-end">Confirmed<br>MW {{ active_week }}</th>
+                        <th scope="col" class="text-end">P50</th>
+                        <th scope="col" class="text-end">P75</th>
+                        <th scope="col">Observed change</th>
+                        <th scope="col">Risk state</th>
+                    </tr>
+                </thead>
+                <tbody id="watchlist-body">
+                    {% for item in watchlist %}
+                    <tr data-watchlist-item data-district="{{ item.district }}">
+                        <td><span class="priority-number">{{ item.risk_rank if item.risk_rank < 4 else '—' }}</span></td>
+                        <th scope="row">
+                            <span class="barangay-name">{{ item.name }}</span>
+                            <span class="barangay-district">{{ item.district if item.district else 'District not recorded' }}</span>
+                        </th>
+                        <td class="text-end case-volume">{{ item.active_cases }}</td>
+                        <td class="text-end threshold-value">{{ '%g'|format(item.median) if item.median is not none else '—' }}</td>
+                        <td class="text-end threshold-value">{{ '%g'|format(item.baseline_75th) if item.baseline_75th is not none else '—' }}</td>
+                        <td>
+                            {% if item.week_change is none %}
+                            <span class="change-unavailable">No prior-week record</span>
+                            {% elif item.week_change > 0 %}
+                            <span class="change-up">+{{ item.week_change }}</span>
+                            {% elif item.week_change < 0 %}
+                            <span class="change-down">{{ item.week_change }}</span>
+                            {% else %}
+                            <span class="change-flat">No change</span>
+                            {% endif %}
+                        </td>
+                        <td><span class="risk-badge risk-badge-{{ item.status_color }}">{{ item.status }}</span></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <p id="watchlist-no-match" class="empty-filter" hidden>No listed barangays match this district.</p>
+        {% else %}
+        <div class="empty-state watchlist-empty">
+            <strong>No confirmed barangay records for MW {{ active_week if active_week else '—' }}</strong>
+            <p>This list cannot show barangays with no submitted records as zero-case locations. Check reporting records before interpreting an empty list.</p>
+        </div>
+        {% endif %}
+        <div class="watchlist-footer">
+            <span>Sorted by risk tier, observed week-to-week change, then confirmed case volume.</span>
+            <span>
+                <b class="tier-count tier-red">{{ risk_counts.red }} red</b>
+                <b class="tier-count tier-yellow">{{ risk_counts.yellow }} yellow</b>
+                <b class="tier-count tier-green">{{ risk_counts.green }} green</b>
+                {% if risk_counts.baseline_unavailable %}
+                <b class="tier-count">{{ risk_counts.baseline_unavailable }} without baseline</b>
+                {% endif %}
+            </span>
+        </div>
+    </section>
 </div>
+
+<script id="dashboard-trend-data" type="application/json">{{ trend|tojson }}</script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
-    .dashboard-pagination {
-        max-width: 100%;
-        overflow-x: auto;
-        overflow-y: hidden;
-        padding-bottom: 2px;
+    .surveillance-dashboard {
+        --ink: #172a3a;
+        --muted: #647585;
+        --line: #e2e8ed;
+        --surface: #fff;
+        --canvas: #f5f8fa;
+        --navy: #18374d;
+        color: var(--ink);
+        padding: 0.25rem 0 2rem;
     }
 
-    .dashboard-pagination .pagination {
-        width: max-content;
-        min-width: 100%;
-    }
-
-    .alert-banner-content {
+    .dashboard-header,
+    .panel-heading {
         display: flex;
+        align-items: flex-end;
         justify-content: space-between;
-        align-items: flex-start;
-        gap: 1rem;
+        gap: 1.25rem;
+    }
+
+    .dashboard-header {
+        margin-bottom: 1.35rem;
+    }
+
+    .dashboard-eyebrow,
+    .panel-kicker {
+        margin: 0 0 0.3rem;
+        color: #527082;
+        font-size: 0.74rem;
+        font-weight: 800;
+        letter-spacing: 0.11em;
+    }
+
+    .dashboard-header h1 {
+        margin: 0;
+        color: var(--navy);
+        font-size: clamp(1.7rem, 3vw, 2.2rem);
+        font-weight: 750;
+        letter-spacing: -0.035em;
+    }
+
+    .dashboard-subtitle,
+    .panel-heading p:last-child,
+    .panel-intro {
+        margin: 0.35rem 0 0;
+        color: var(--muted);
+    }
+
+    .year-filter,
+    .watchlist-filter {
+        display: grid;
+        gap: 0.3rem;
+        min-width: 10rem;
+    }
+
+    .year-filter label,
+    .watchlist-filter label {
+        color: var(--muted);
+        font-size: 0.78rem;
+        font-weight: 700;
+    }
+
+    .year-filter .form-select {
+        min-width: 9.5rem;
+        border-color: #cbd6dd;
+        font-weight: 650;
+    }
+
+    .risk-summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1.5rem;
+        margin-bottom: 1rem;
+        padding: clamp(1.1rem, 2.5vw, 1.7rem);
+        border: 1px solid transparent;
+        border-radius: 0.9rem;
+        box-shadow: 0 8px 25px rgba(27, 55, 74, 0.06);
+    }
+
+    .risk-green { --risk: #26734d; --risk-bg: #edf7f0; --risk-border: #b9ddc7; }
+    .risk-yellow { --risk: #8a5a00; --risk-bg: #fff8e6; --risk-border: #f0d48d; }
+    .risk-red { --risk: #a63535; --risk-bg: #fff0ef; --risk-border: #efbfbc; }
+    .risk-neutral { --risk: #4a6374; --risk-bg: #f0f4f6; --risk-border: #d3dee5; }
+
+    .risk-summary {
+        color: var(--ink);
+        background: var(--risk-bg);
+        border-color: var(--risk-border);
+    }
+
+    .risk-summary-main { min-width: 0; }
+
+    .risk-label-row {
+        display: flex;
+        align-items: center;
         flex-wrap: wrap;
+        gap: 0.55rem;
+        margin-bottom: 0.55rem;
     }
 
-    .alert-left-content {
-        min-width: 0;
+    .risk-indicator {
+        width: 0.65rem;
+        height: 0.65rem;
+        border-radius: 50%;
+        background: var(--risk);
+        box-shadow: 0 0 0 4px color-mix(in srgb, var(--risk) 14%, transparent);
     }
 
-    .alert-right-content {
-        margin-left: auto;
+    .risk-label {
+        color: var(--risk);
+        font-size: 0.78rem;
+        font-weight: 800;
+        letter-spacing: 0.055em;
+        text-transform: uppercase;
+    }
+
+    .risk-week {
+        padding: 0.15rem 0.5rem;
+        border: 1px solid var(--risk-border);
+        border-radius: 99px;
+        color: var(--muted);
+        font-size: 0.77rem;
+        font-weight: 650;
+    }
+
+    .risk-summary h2 {
+        margin: 0;
+        color: var(--ink);
+        font-size: clamp(1.2rem, 2.2vw, 1.55rem);
+        font-weight: 750;
+    }
+
+    .risk-explanation,
+    .risk-action {
+        max-width: 60rem;
+        margin: 0.4rem 0 0;
+        color: #405463;
+    }
+
+    .risk-action { font-size: 0.9rem; }
+
+    .risk-summary-side {
         flex: 0 0 auto;
+        min-width: 10rem;
+        padding-left: 1.25rem;
+        border-left: 1px solid var(--risk-border);
+        text-align: right;
     }
 
-    #forecast-direction.badge {
-        display: inline-block;
-        padding: 2px 8px;
-        border-radius: 0.375rem;
+    .risk-current-count {
+        color: var(--risk);
+        font-size: 2rem;
+        font-weight: 800;
+        line-height: 1;
     }
 
-    .dashboard-segment-bar {
-        height: 0.55rem;
-        border-radius: 999px;
+    .risk-current-na { color: #647585; }
+    .risk-current-caption,
+    .risk-date { margin-top: 0.35rem; color: var(--muted); font-size: 0.78rem; }
+
+    .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0.85rem;
+        margin-bottom: 0.9rem;
     }
 
-    .alert-banner-content .small,
-    .card .small,
-    .card small,
-    .modal .small,
-    .list-group-item small,
-    .alert > div > small {
-        font-size: 0.9rem;
-        line-height: 1.4;
+    .metric-card,
+    .panel {
+        border: 1px solid var(--line);
+        border-radius: 0.85rem;
+        background: var(--surface);
+        box-shadow: 0 5px 18px rgba(27, 55, 74, 0.035);
     }
 
-    .card .badge,
-    .alert .badge {
-        font-size: 0.8rem;
-        line-height: 1.25;
+    .metric-card {
+        display: flex;
+        min-height: 8rem;
+        flex-direction: column;
+        padding: 1.05rem 1.15rem;
     }
 
-    .case-view-button,
-    #surveillance-year,
-    #forecast-horizon,
-    #dashboard-forecast .btn {
-        font-size: 0.9rem;
+    .metric-card-primary { border-top: 3px solid #347ba0; }
+    .metric-label { color: var(--muted); font-size: 0.82rem; font-weight: 700; }
+    .metric-value { margin-top: 0.35rem; color: var(--navy); font-size: 1.8rem; line-height: 1.1; }
+    .metric-caption { margin-top: auto; padding-top: 0.55rem; color: var(--muted); font-size: 0.75rem; }
+
+    .data-basis {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.7rem;
+        margin: 0.9rem 0 1.1rem;
+        padding: 0.8rem 1rem;
+        border: 1px solid #dce5eb;
+        border-radius: 0.7rem;
+        background: #f7fafb;
+    }
+
+    .data-basis-icon {
+        display: grid;
+        flex: 0 0 1.25rem;
+        width: 1.25rem;
+        height: 1.25rem;
+        place-items: center;
+        border-radius: 50%;
+        background: #e3edf2;
+        color: #355b70;
+        font-size: 0.75rem;
+        font-weight: 800;
+    }
+
+    .data-basis-content { min-width: 0; flex: 1; }
+    .data-basis-content h2 { margin: 0 0 0.55rem; color: #304858; font-size: 0.93rem; font-weight: 800; }
+    .data-basis-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.65rem 1.1rem; }
+    .data-basis-grid p { margin: 0; color: #4f6270; font-size: 0.79rem; }
+    .data-basis-grid strong { display: block; margin-bottom: 0.12rem; color: #304858; }
+    .data-basis-totals { margin: 0.55rem 0 0; padding-top: 0.5rem; border-top: 1px solid #e1e9ed; color: #647585; font-size: 0.75rem; }
+
+    .dashboard-content-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.85fr) minmax(17rem, 0.85fr);
+        gap: 0.9rem;
+        margin-bottom: 0.9rem;
+    }
+
+    .panel { min-width: 0; padding: clamp(1rem, 2vw, 1.35rem); }
+    .panel-heading { align-items: flex-start; margin-bottom: 1rem; }
+    .panel-heading h2,
+    .forecast-panel h2 { margin: 0; color: var(--navy); font-size: 1.18rem; font-weight: 750; }
+    .panel-heading p:last-child { font-size: 0.83rem; }
+    .panel-heading .btn { flex: 0 0 auto; }
+    .chart-legend { display: flex; flex-wrap: wrap; gap: 0.65rem 1.1rem; margin-bottom: 0.65rem; }
+    .chart-legend span { display: inline-flex; align-items: center; gap: 0.4rem; color: #4f6270; font-size: 0.75rem; }
+    .legend-swatch { display: inline-block; width: 1.1rem; height: 0.18rem; border-radius: 2px; }
+    .legend-actual { background: #23769a; }
+    .legend-median { background: #cb8b18; }
+    .legend-threshold { background: #b94545; }
+    .legend-forecast { height: 0.16rem; background: repeating-linear-gradient(90deg, #16836c 0 5px, transparent 5px 8px); }
+    .chart-container { position: relative; height: clamp(16rem, 30vw, 23rem); }
+    .chart-footnote { margin: 0.6rem 0 0; color: var(--muted); font-size: 0.75rem; }
+
+    .forecast-panel {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        background: linear-gradient(160deg, #fff 45%, #f2f7f9);
+    }
+
+    .forecast-panel .panel-kicker { margin-bottom: 0.5rem; }
+    .forecast-panel h2 { font-size: 1.3rem; }
+    .forecast-panel .panel-intro { font-size: 0.86rem; }
+    .forecast-result {
+        margin-top: 1.35rem;
+        color: #175c78;
+        font-size: clamp(1.55rem, 2.7vw, 2.1rem);
+        font-weight: 800;
+        line-height: 1.2;
+    }
+
+    .forecast-detail { min-height: 3.2rem; margin: 0.5rem 0 1.2rem; color: var(--muted); font-size: 0.8rem; }
+    .forecast-method { display: flex; align-items: center; gap: 0.65rem; margin-top: auto; padding-top: 0.85rem; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.77rem; }
+    .method-equation { padding: 0.35rem 0.55rem; border-radius: 0.4rem; background: #e8f1f5; color: #27576f; font-weight: 750; white-space: nowrap; }
+
+    .watchlist-heading { align-items: flex-end; }
+    .watchlist-filter { width: min(13rem, 100%); }
+    .watchlist-table { min-width: 43rem; }
+    .watchlist-table thead th {
+        padding: 0.7rem 0.75rem;
+        border-bottom: 1px solid #d9e2e8;
+        background: #f7f9fa;
+        color: #5a6e7c;
+        font-size: 0.72rem;
+        font-weight: 750;
+        letter-spacing: 0.035em;
+        text-transform: uppercase;
+        vertical-align: bottom;
+    }
+
+    .watchlist-table tbody td,
+    .watchlist-table tbody th { padding: 0.72rem 0.75rem; border-color: #edf1f3; }
+    .watchlist-table tbody tr:hover { background: #f8fafb; }
+    .watchlist-table tbody tr[hidden] { display: none; }
+    .priority-number { display: grid; width: 1.65rem; height: 1.65rem; place-items: center; border-radius: 50%; background: #edf1f3; color: #405563; font-size: 0.8rem; font-weight: 800; }
+    .barangay-name { display: block; color: #20394a; font-weight: 700; }
+    .barangay-district { display: block; margin-top: 0.15rem; color: var(--muted); font-size: 0.75rem; font-weight: 400; }
+    .case-volume { color: #20394a; font-size: 1rem; font-weight: 800; }
+    .threshold-value { color: #546977; font-variant-numeric: tabular-nums; }
+    .risk-badge { display: inline-block; padding: 0.28rem 0.52rem; border-radius: 99px; font-size: 0.7rem; font-weight: 750; white-space: nowrap; }
+    .risk-badge-danger { background: #fde7e5; color: #9c3434; }
+    .risk-badge-warning { background: #fff2d1; color: #785200; }
+    .risk-badge-success { background: #e4f3e8; color: #226442; }
+    .risk-badge-info { background: #e8eef2; color: #536978; }
+    .change-up { color: #a63535; font-weight: 750; }
+    .change-down { color: #26734d; font-weight: 750; }
+    .change-flat { color: #536978; }
+    .change-unavailable { color: #7a8790; font-size: 0.76rem; }
+    .watchlist-footer { display: flex; justify-content: space-between; gap: 0.75rem; margin-top: 0.85rem; color: var(--muted); font-size: 0.75rem; }
+    .tier-count { margin-left: 0.6rem; font-weight: 700; white-space: nowrap; }
+    .tier-red { color: #a63535; }
+    .tier-yellow { color: #8a5a00; }
+    .tier-green { color: #26734d; }
+    .empty-state { padding: 1.4rem; border: 1px dashed #cbd6dd; border-radius: 0.65rem; background: #fafcfd; }
+    .empty-state strong { color: #344c5c; }
+    .empty-state p { margin: 0.35rem 0 0; color: var(--muted); font-size: 0.84rem; }
+    .empty-filter { margin: 1rem 0 0; color: var(--muted); font-size: 0.85rem; }
+
+    @media (max-width: 991.98px) {
+        .dashboard-content-grid { grid-template-columns: minmax(0, 1.45fr) minmax(16rem, 0.9fr); }
+        .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 767.98px) {
+        .dashboard-content-grid { grid-template-columns: 1fr; }
+        .risk-summary { align-items: flex-start; }
+        .risk-summary-side { min-width: 8rem; }
+        .watchlist-footer { flex-direction: column; }
+    }
+
+    @media (max-width: 575.98px) {
+        .dashboard-header { align-items: flex-start; flex-direction: column; }
+        .year-filter { width: 100%; }
+        .risk-summary { flex-direction: column; gap: 0.85rem; }
+        .risk-summary-side { width: 100%; padding: 0.75rem 0 0; border-top: 1px solid var(--risk-border); border-left: 0; text-align: left; }
+        .risk-current-count { font-size: 1.7rem; }
+        .metric-grid { gap: 0.6rem; }
+        .metric-card { min-height: 7.5rem; padding: 0.85rem; }
+        .metric-value { font-size: 1.55rem; }
+        .panel-heading { flex-direction: column; }
+        .watchlist-heading { flex-direction: column; }
+        .watchlist-filter { width: 100%; }
+        .chart-container { height: 17rem; }
+        .data-basis-grid { grid-template-columns: 1fr; }
     }
 </style>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-    Chart.defaults.font.size = 13;
+    (() => {
+        const trendElement = document.getElementById('dashboard-trend-data');
+        const trend = trendElement ? JSON.parse(trendElement.textContent) : null;
+        const chartCanvas = document.getElementById('weekly-case-chart');
+        let weeklyChart = null;
+        let forecastPointIndex = null;
+        const chartWeekCount = trend ? Number(trend.current_week) || 0 : 0;
+        const nextWeekNumber = chartWeekCount % 52 + 1;
+        const nextYear = chartWeekCount === 52;
+        const forecastWeekLabel = nextYear
+            ? `MW 1 · ${Number(trend.year) + 1} forecast`
+            : `MW ${nextWeekNumber} · forecast`;
+        const forecastChartLegend = document.getElementById('forecast-chart-legend');
+        if (forecastChartLegend && trend && trend.weekly_data_available) {
+            forecastChartLegend.textContent = `Naïve forecast · ${forecastWeekLabel}`;
+        }
 
-    const ctx = document.getElementById('morbidityWeekChart');
-    const morbidity_week_trends = ctx ? JSON.parse(ctx.dataset.morbidityWeekTrends) : [];
-    const trend = ctx ? JSON.parse(ctx.dataset.trend) : { baseline_75th: [], median: [] };
-    const weeklyLabels = morbidity_week_trends.map(item => `MW ${item.week}`);
-    const weeklyValues = morbidity_week_trends.map(item => item.count);
-    const monthlyLabels = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-    const monthlyValues = trend.monthly_actual || [];
-    const monthlyMedian = trend.monthly_median || [];
-    const monthlyBaseline = trend.monthly_baseline_75th || [];
-    const forecastCard = document.getElementById('dashboard-forecast');
-    const forecastValue = document.getElementById('forecast-value');
-    const forecastDirection = document.getElementById('forecast-direction');
-    const forecastHorizon = document.getElementById('forecast-horizon');
-    const actionRequired = document.getElementById('dashboard-action-required');
-    const baseActionRequired = actionRequired ? actionRequired.textContent : '';
-    let activePeriod = 'weekly';
-    let cachedForecast = null;
-    let forecastLoadPromise = null;
-
-    const watchlistDistrict = document.getElementById('watchlist-district');
-    const watchlistItems = Array.from(document.querySelectorAll('[data-watchlist-item]'));
-    const watchlistPagination = document.getElementById('watchlist-pagination');
-    const watchlistPrevious = document.getElementById('watchlist-previous');
-    const watchlistNext = document.getElementById('watchlist-next');
-    const watchlistPageStatus = document.getElementById('watchlist-page-status');
-    const watchlistNoMatch = document.querySelector('[data-watchlist-no-match]');
-    const watchlistPageSize = 10;
-    let watchlistPage = 1;
-    const updateWatchlist = () => {
-        const district = watchlistDistrict ? watchlistDistrict.value : '';
-        const filteredItems = watchlistItems.filter(item =>
-            !district || item.dataset.district === district
-        );
-        const pageCount = Math.max(1, Math.ceil(filteredItems.length / watchlistPageSize));
-        watchlistPage = Math.min(watchlistPage, pageCount);
-        const pageStart = (watchlistPage - 1) * watchlistPageSize;
-        const visibleItems = new Set(filteredItems.slice(pageStart, pageStart + watchlistPageSize));
-        watchlistItems.forEach(item => {
-            item.hidden = !visibleItems.has(item);
-        });
-        if (watchlistNoMatch) {
-            watchlistNoMatch.hidden = filteredItems.length > 0 || watchlistItems.length === 0;
-        }
-        if (watchlistPagination) {
-            watchlistPagination.hidden = filteredItems.length <= watchlistPageSize;
-        }
-        if (watchlistPrevious) {
-            watchlistPrevious.disabled = watchlistPage <= 1;
-        }
-        if (watchlistNext) {
-            watchlistNext.disabled = watchlistPage >= pageCount;
-        }
-        if (watchlistPageStatus) {
-            watchlistPageStatus.textContent = `Page ${watchlistPage} of ${pageCount}`;
-        }
-    };
-    if (watchlistDistrict) {
-        watchlistDistrict.addEventListener('change', () => {
-            watchlistPage = 1;
-            updateWatchlist();
-        });
-    }
-    if (watchlistPrevious) {
-        watchlistPrevious.addEventListener('click', () => {
-            watchlistPage = Math.max(1, watchlistPage - 1);
-            updateWatchlist();
-        });
-    }
-    if (watchlistNext) {
-        watchlistNext.addEventListener('click', () => {
-            watchlistPage += 1;
-            updateWatchlist();
-        });
-    }
-    updateWatchlist();
-
-    if (ctx) {
-        const chart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: weeklyLabels,
-                datasets: [{
-                    label: 'Current year confirmed cases',
-                    data: weeklyValues,
-                    borderColor: '#0d6efd',
-                    backgroundColor: 'rgba(13,110,253,0.15)',
-                    fill: true,
-                    tension: 0.3,
-                    pointRadius: 2
-                }, {
-                    label: 'Historical median (P50)',
-                    data: trend.median,
-                    borderColor: '#f0ad00',
-                    backgroundColor: 'transparent',
-                    borderDash: [6, 4],
-                    fill: false,
-                    tension: 0.3,
-                    pointRadius: 0
-                }, {
-                    label: 'Historical 75th percentile (P75)',
-                    data: trend.baseline_75th,
-                    borderColor: '#dc3545',
-                    backgroundColor: 'transparent',
-                    borderDash: [6, 4],
-                    fill: false,
-                    tension: 0.3,
-                    pointRadius: 0
-                }, {
-                    label: 'Naïve Persistence Forecast',
-                    data: weeklyLabels.map(() => null),
-                    borderColor: '#198754',
-                    backgroundColor: '#198754',
-                    borderDash: [5, 5],
-                    fill: false,
-                    tension: 0,
-                    pointRadius: 5,
-                    pointHoverRadius: 7,
-                    pointStyle: 'circle',
-                    spanGaps: true,
-                    hidden: true
-                }, {
-                    label: 'Naïve Persistence interval lower bound',
-                    data: weeklyLabels.map(() => null),
-                    borderColor: 'transparent',
-                    backgroundColor: 'transparent',
-                    fill: false,
-                    pointRadius: 0,
-                    hidden: true
-                }, {
-                    label: 'Naïve Persistence estimated 95% interval',
-                    data: weeklyLabels.map(() => null),
-                    borderColor: 'transparent',
-                    backgroundColor: 'rgba(25,135,84,0.14)',
-                    fill: '-1',
-                    pointRadius: 0,
-                    hidden: true
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                scales: {
-                    y: {
-                        beginAtZero: true,
-                        ticks: {
-                            precision: 0
-                        }
-                    }
+        if (chartCanvas && trend && window.Chart) {
+            const weekCount = chartWeekCount;
+            const labels = trend.weeks.slice(0, weekCount).map(week => `MW ${week}`);
+            labels.push(forecastWeekLabel);
+            forecastPointIndex = weekCount;
+            weeklyChart = new Chart(chartCanvas, {
+                type: 'line',
+                data: {
+                    labels,
+                    datasets: [{
+                        label: 'Confirmed cases',
+                        data: trend.actual.slice(0, weekCount),
+                        borderColor: '#23769a',
+                        backgroundColor: 'rgba(35, 118, 154, 0.10)',
+                        borderWidth: 2.5,
+                        pointRadius: 2,
+                        pointHoverRadius: 5,
+                        tension: 0.22,
+                        fill: true,
+                        spanGaps: false
+                    }, {
+                        label: 'Historical median · P50',
+                        data: trend.median.slice(0, weekCount),
+                        borderColor: '#cb8b18',
+                        borderDash: [6, 4],
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        tension: 0,
+                        fill: false
+                    }, {
+                        label: 'Upper threshold · P75',
+                        data: trend.baseline_75th.slice(0, weekCount),
+                        borderColor: '#b94545',
+                        borderDash: [3, 4],
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        tension: 0,
+                        fill: false
+                    }, {
+                        label: 'Naïve persistence · one-week forecast (not observed)',
+                        data: Array.from(
+                            { length: weekCount + 1 },
+                            (_, index) => index === weekCount - 1
+                                ? Number(trend.current_count)
+                                : null
+                        ),
+                        borderColor: '#16836c',
+                        borderDash: [7, 5],
+                        borderWidth: 2.5,
+                        pointRadius: context => context.dataIndex === forecastPointIndex ? 7 : 0,
+                        pointHoverRadius: 9,
+                        pointStyle: 'circle',
+                        pointBackgroundColor: '#fff',
+                        pointBorderColor: '#16836c',
+                        pointBorderWidth: 2.5,
+                        tension: 0,
+                        fill: false,
+                        spanGaps: false
+                    }]
                 },
-                plugins: {
-                    legend: {
-                        display: true,
-                        labels: {
-                            usePointStyle: true,
-                            filter: (legendItem, chartData) => !chartData.datasets[legendItem.datasetIndex].hidden
-                        }
-                    },
-                    tooltip: {
-                        callbacks: {
-                            label: context => {
-                                const label = context.dataset.label || '';
-                                const value = context.raw;
-                                if ((label.indexOf('Persistence') !== -1 || label.indexOf('Forecast') !== -1 || label.indexOf('Projection') !== -1) && typeof value === 'number') {
-                                    return `${label}: ${Math.round(value)}`;
-                                }
-                                return `${label}: ${context.formattedValue}`;
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    layout: { padding: { top: 8, right: 14 } },
+                    interaction: { intersect: false, mode: 'index' },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: context => context.raw === null || context.raw === undefined
+                                    ? null
+                                    : `${context.dataset.label}: ${context.raw}`
                             }
                         }
+                    },
+                    scales: {
+                        x: {
+                            offset: true,
+                            grid: { display: false },
+                            ticks: { maxTicksLimit: 12, maxRotation: 0, color: '#667987' }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            ticks: { precision: 0, color: '#667987' },
+                            title: { display: true, text: 'Confirmed case records', color: '#667987' },
+                            grid: { color: 'rgba(104, 127, 141, 0.12)' }
+                        }
                     }
                 }
-            }
-        });
-
-        const forecastDataset = chart.data.datasets[3];
-        const intervalLowerDataset = chart.data.datasets[4];
-        const intervalUpperDataset = chart.data.datasets[5];
-        const weeklyForecastData = (forecasts, currentWeek, currentCases, property) => {
-            const maxForecastWeek = Math.max(currentWeek, ...forecasts.map(item => Number(item.week)));
-            while (weeklyLabels.length < maxForecastWeek) {
-                const week = weeklyLabels.length + 1;
-                weeklyLabels.push(`MW ${week}`);
-                weeklyValues.push(null);
-                trend.median.push(null);
-                trend.baseline_75th.push(null);
-                if (activePeriod === 'weekly') {
-                    chart.data.labels.push(`MW ${week}`);
-                }
-                chart.data.datasets.forEach(dataset => dataset.data.push(null));
-            }
-            const data = weeklyLabels.map(() => null);
-            const currentIndex = currentWeek - 1;
-            if (currentIndex >= 0 && currentIndex < data.length) {
-                data[currentIndex] = currentCases;
-            }
-            forecasts.forEach(item => {
-                const weekIndex = Number(item.week) - 1;
-                if (weekIndex >= 0 && weekIndex < data.length) {
-                    data[weekIndex] = Number(item[property]);
-                }
             });
-            return data;
-        };
+            weeklyChart.data.datasets[0].data.push(null);
+            weeklyChart.data.datasets[1].data.push(null);
+            weeklyChart.data.datasets[2].data.push(null);
+        }
 
-        const setMetric = (id, value) => {
-            const element = document.getElementById(id);
-            if (element) {
-                element.textContent = value === null || value === undefined ? '—' : value;
-            }
-        };
-
-        const renderForecast = (forecast, horizon) => {
-            if (!forecastCard || !forecastValue || !forecastDirection || !actionRequired) {
-                return;
-            }
-            const hasPrediction = forecast.predicted_cases !== null
-                && forecast.predicted_cases !== undefined
-                && forecast.predicted_cases !== '';
-            const predictedCases = hasPrediction ? Number(forecast.predicted_cases) : NaN;
-            const displayForecastCases = Number.isFinite(predictedCases)
-                ? Math.round(predictedCases)
-                : null;
-            const targetWeek = Number.isFinite(Number(forecast.target_week))
-                ? Number(forecast.target_week)
-                : null;
-            if (displayForecastCases === null || targetWeek === null) {
-                forecastValue.textContent = targetWeek === null
-                    ? 'Not enough weekly history'
-                    : `MW ${targetWeek}: Not enough weekly history`;
-                forecastDirection.textContent = '';
-                forecastDirection.className = 'badge d-none mt-1';
-                actionRequired.textContent = baseActionRequired;
-                return;
-            }
-
-            const availableForecasts = Array.isArray(forecast.forecasts) && forecast.forecasts.length
-                ? forecast.forecasts
-                : [{ week: targetWeek, predicted_cases: predictedCases, lower_bound: predictedCases, upper_bound: predictedCases }];
-            const forecasts = availableForecasts.slice(0, horizon);
-            const currentCases = Math.round(Number(forecast.current_cases));
-            const difference = Math.round(displayForecastCases - currentCases);
-            const displayDifference = Math.abs(difference);
-            let directionLabel;
-            let directionClass;
-            let trajectoryNote;
-            if (difference < 0) {
-                directionLabel = `▼ -${displayDifference} cases`;
-                directionClass = 'bg-success-subtle text-success-emphasis';
-                trajectoryNote = 'Forward projection indicates de-escalating case activity.';
-            } else if (difference > 0) {
-                directionLabel = `▲ +${displayDifference} cases`;
-                directionClass = 'bg-danger-subtle text-danger-emphasis';
-                trajectoryNote = 'Forward projection indicates accelerating case activity.';
-            } else {
-                directionLabel = '━ No change';
-                directionClass = 'bg-secondary-subtle text-secondary-emphasis';
-                trajectoryNote = 'Forward projection indicates stable case activity.';
-            }
-
-            if (forecasts.length > 1) {
-                const lastForecast = forecasts[forecasts.length - 1];
-                forecastValue.textContent = `MW ${targetWeek}–${lastForecast.week}: ${displayForecastCases} to ${Math.round(Number(lastForecast.predicted_cases))} cases`;
-            } else {
-                forecastValue.textContent = `MW ${targetWeek}: ${displayForecastCases} cases`;
-            }
-            forecastDirection.textContent = directionLabel;
-            forecastDirection.className = `badge ${directionClass} mt-1`;
-
-            setMetric('metric-rmse-rf', forecast.rmse_rf);
-            setMetric('metric-mae-rf', forecast.mae_rf);
-            setMetric('metric-rmse-naive', forecast.rmse_naive);
-            setMetric('metric-mae-naive', forecast.mae_naive);
-            setMetric('metric-rmse-lr', forecast.rmse_lr);
-            setMetric('metric-mae-lr', forecast.mae_lr);
-            setMetric('metric-rmse-seasonal', forecast.rmse_seasonal);
-            setMetric('metric-mae-seasonal', forecast.mae_seasonal);
-            setMetric('metric-mean-error-rf', forecast.mean_error_rf);
-            setMetric('metric-mean-error-naive', forecast.mean_error_naive ?? forecast.mean_error);
-            setMetric('metric-mean-error-lr', forecast.mean_error_lr);
-            setMetric('metric-mean-error-seasonal', forecast.mean_error_seasonal);
-
-            actionRequired.textContent = `${baseActionRequired} ${trajectoryNote}`;
-
-            forecastDataset.data = weeklyForecastData(forecasts, Number(forecast.current_week), currentCases, 'predicted_cases');
-            intervalLowerDataset.data = weeklyForecastData(forecasts, Number(forecast.current_week), currentCases, 'lower_bound');
-            intervalUpperDataset.data = weeklyForecastData(forecasts, Number(forecast.current_week), currentCases, 'upper_bound');
-            forecastDataset.label = forecasts.length > 1
-                ? 'Naïve Persistence Multi-Week Projection'
-                : 'Naïve Persistence Forecast';
-            forecastDataset.hidden = activePeriod !== 'weekly';
-            intervalLowerDataset.hidden = activePeriod !== 'weekly';
-            intervalUpperDataset.hidden = activePeriod !== 'weekly';
-            const intervalNote = document.getElementById('forecast-interval-note');
-            if (intervalNote) {
-                intervalNote.hidden = activePeriod !== 'weekly';
-            }
-            chart.update();
-        };
-
-        const loadForecast = (horizon = 1) => {
-            if (!forecastCard || !forecastValue || !forecastDirection || !actionRequired) {
-                return;
-            }
-            if (cachedForecast) {
-                renderForecast(cachedForecast, horizon);
-                return;
-            }
-            if (forecastLoadPromise) {
-                return;
-            }
-            forecastValue.textContent = 'Loading projection...';
-            forecastLoadPromise = fetch(`/api/dashboard/forecast?year=${encodeURIComponent(forecastCard.dataset.year)}&week=${encodeURIComponent(trend.current_week)}&horizon=4`)
-                .then(response => response.ok ? response.json() : Promise.reject(new Error('Forecast unavailable')))
+        const forecastResult = document.getElementById('forecast-result');
+        const forecastDetail = document.getElementById('forecast-detail');
+        if (forecastResult && forecastDetail && trend && trend.weekly_data_available) {
+            const formatCount = value => new Intl.NumberFormat().format(Math.round(Number(value)));
+            const query = new URLSearchParams({
+                year: String(trend.year),
+                week: String(trend.current_week),
+                horizon: '1'
+            });
+            fetch(`/api/dashboard/forecast?${query.toString()}`)
+                .then(response => {
+                    if (!response.ok) throw new Error('Forecast request failed');
+                    return response.json();
+                })
                 .then(forecast => {
-                    cachedForecast = forecast;
-                    const selectedHorizon = forecastHorizon ? Number(forecastHorizon.value) : horizon;
-                    renderForecast(forecast, selectedHorizon);
+                    if (forecast.predicted_cases === null || forecast.predicted_cases === undefined) {
+                        forecastResult.textContent = 'Not enough weekly data';
+                        forecastDetail.textContent = 'The one-week reference projection is unavailable for this reporting period.';
+                        return;
+                    }
+                    forecastResult.textContent = `${formatCount(forecast.predicted_cases)} cases`;
+                    forecastDetail.textContent = `${forecastWeekLabel}: ${formatCount(forecast.predicted_cases)} cases, carried forward from ${formatCount(forecast.current_cases)} confirmed cases in MW ${forecast.current_week}. This is an awareness estimate, not a certainty or an outbreak declaration.`;
+                    if (weeklyChart && forecastPointIndex !== null) {
+                        weeklyChart.data.datasets[3].data[forecastPointIndex - 1] = Number(forecast.current_cases);
+                        weeklyChart.data.datasets[3].data[forecastPointIndex] = Number(forecast.predicted_cases);
+                        weeklyChart.update();
+                    }
                 })
                 .catch(() => {
-                    forecastValue.textContent = 'Unavailable';
-                    forecastDirection.textContent = '';
-                    forecastDirection.className = 'badge d-none mt-1';
-                    actionRequired.textContent = baseActionRequired;
-                    forecastDataset.hidden = true;
-                    intervalLowerDataset.hidden = true;
-                    intervalUpperDataset.hidden = true;
-                    chart.update();
-                })
-                .finally(() => {
-                    forecastLoadPromise = null;
+                    forecastResult.textContent = 'Forecast unavailable';
+                    forecastDetail.textContent = 'The forecast service could not return a projection. The observed case count and thresholds above remain available.';
                 });
-        };
-
-        loadForecast();
-        if (forecastHorizon) {
-            forecastHorizon.addEventListener('change', () => loadForecast(Number(forecastHorizon.value)));
         }
-        const periodButtons = document.querySelectorAll('.trend-period-button');
-        periodButtons.forEach(button => {
-            button.addEventListener('click', () => {
-                const monthly = button.dataset.period === 'monthly';
-                activePeriod = monthly ? 'monthly' : 'weekly';
-                chart.data.labels = monthly ? monthlyLabels : weeklyLabels;
-                chart.data.datasets[0].data = monthly ? monthlyValues : weeklyValues;
-                chart.data.datasets[1].data = monthly ? monthlyMedian : trend.median;
-                chart.data.datasets[2].data = monthly ? monthlyBaseline : trend.baseline_75th;
-                forecastDataset.hidden = monthly || !Array.isArray(forecastDataset.data) || !forecastDataset.data.some(value => value !== null);
-                intervalLowerDataset.hidden = monthly;
-                intervalUpperDataset.hidden = monthly;
-                const intervalNote = document.getElementById('forecast-interval-note');
-                if (intervalNote) {
-                    intervalNote.hidden = monthly;
-                }
-                periodButtons.forEach(periodButton => {
-                    const active = periodButton === button;
-                    periodButton.classList.toggle('btn-primary', active);
-                    periodButton.classList.toggle('btn-outline-primary', !active);
-                    periodButton.setAttribute('aria-pressed', String(active));
-                });
-                chart.update();
-            });
-        });
-    }
 
-    const caseViewButtons = document.querySelectorAll('.case-view-button');
-    const caseTotalPanel = document.getElementById('case-total-panel');
-    const caseBreakdownPanel = document.getElementById('case-breakdown-panel');
-    caseViewButtons.forEach(button => {
-        button.addEventListener('click', () => {
-            const showBreakdown = button.dataset.view === 'breakdown';
-            if (caseTotalPanel) {
-                caseTotalPanel.hidden = showBreakdown;
-            }
-            if (caseBreakdownPanel) {
-                caseBreakdownPanel.hidden = !showBreakdown;
-            }
-            caseViewButtons.forEach(viewButton => {
-                const active = viewButton === button;
-                viewButton.classList.toggle('btn-primary', active);
-                viewButton.classList.toggle('btn-outline-primary', !active);
-                viewButton.setAttribute('aria-pressed', String(active));
+        const districtFilter = document.getElementById('watchlist-district');
+        const watchlistRows = Array.from(document.querySelectorAll('[data-watchlist-item]'));
+        const noMatch = document.getElementById('watchlist-no-match');
+        if (districtFilter && watchlistRows.length) {
+            districtFilter.addEventListener('change', () => {
+                let visibleRows = 0;
+                watchlistRows.forEach(row => {
+                    const visible = !districtFilter.value || row.dataset.district === districtFilter.value;
+                    row.hidden = !visible;
+                    if (visible) visibleRows += 1;
+                });
+                if (noMatch) noMatch.hidden = visibleRows > 0;
             });
-        });
-    });
+        }
+    })();
 </script>
 {% endblock %}

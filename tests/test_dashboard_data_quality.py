@@ -161,6 +161,14 @@ class DashboardDataQualityTest(unittest.TestCase):
         self.assertEqual(trend['baseline_75th'][19], 10)
         self.assertEqual(trend['risk_level'], 'GREEN')
 
+    def test_unreported_current_year_weeks_remain_gaps_not_zero_case_weeks(self):
+        with app.app_context():
+            trend = get_dashboard_trend(2025)
+
+        self.assertEqual(trend['actual'][9], 5)
+        self.assertIsNone(trend['actual'][10])
+        self.assertEqual(trend['actual'][19], 8)
+
     def test_suspected_only_week_is_zero_and_unrecorded_future_week_is_none(self):
         with app.app_context():
             db.session.add(DengueRecord(
@@ -207,9 +215,9 @@ class DashboardDataQualityTest(unittest.TestCase):
 
         body = response.get_data(as_text=True)
         self.assertEqual(response.status_code, 200)
-        self.assertIn('Epidemic Threshold (P', body)
-        self.assertIn('ACTIVE CLUSTERS', body)
-        self.assertIn('BLUE - Historical Baseline', no_baseline)
+        self.assertIn('Upper threshold · P75', body)
+        self.assertIn('Locations represented', body)
+        self.assertIn('Historical Baseline', no_baseline)
         self.assertIn('Weekly Data Unavailable', unavailable)
 
     def test_watchlist_district_filter_is_independent_of_dashboard_metrics(self):
@@ -257,10 +265,9 @@ class DashboardDataQualityTest(unittest.TestCase):
         self.assertIn('North Barangay', filtered)
         self.assertIn('Surge Barangay', filtered)
         self.assertIn('id="watchlist-district"', filtered)
-        self.assertNotIn('id="watchlist-district" name=', filtered)
-        self.assertIn("watchlistDistrict.addEventListener('change'", filtered)
-        self.assertIn('TOTAL CONFIRMED CASES: 14', all_districts)
-        self.assertIn('TOTAL CONFIRMED CASES: 14', filtered)
+        self.assertIn("districtFilter.addEventListener('change'", filtered)
+        self.assertIn('14 confirmed', all_districts)
+        self.assertIn('14 confirmed', filtered)
 
     def test_archived_records_are_excluded_from_dashboard_reports_and_exports(self):
         with app.app_context():
@@ -325,7 +332,7 @@ class DashboardDataQualityTest(unittest.TestCase):
         self.assertEqual(dashboard_response.status_code, 200)
         self.assertEqual(report_response.status_code, 200)
         dashboard_body = dashboard_response.get_data(as_text=True)
-        self.assertIn('TOTAL CONFIRMED CASES: 12', dashboard_body)
+        self.assertIn('12 confirmed', dashboard_body)
         self.assertIn('QUALITY-013,4,30', case_export)
         self.assertIn('Suspected', case_export)
         with app.app_context():

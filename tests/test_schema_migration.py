@@ -542,10 +542,9 @@ class UploadHeaderCompatibilityTest(unittest.TestCase):
             client.post('/login', data={'username': 'trenduser', 'password': 'pass'}, follow_redirects=False)
             response = client.get('/dashboard')
             body = response.get_data(as_text=True)
-            self.assertIn('morbidity_week_trends', body)
-            self.assertIn('week', body)
-            self.assertIn('count', body)
-            self.assertIn('1', body)
+            self.assertIn('dashboard-trend-data', body)
+            self.assertIn('trend.weeks', body)
+            self.assertIn('trend.actual', body)
 
 
 if __name__ == '__main__':
