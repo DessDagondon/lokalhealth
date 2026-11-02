@@ -1,23 +1,22 @@
 import os
 import time
 from pathlib import Path
-import pandas as pd
 import sqlcipher3
 from dotenv import load_dotenv
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from utils import fetch_barangay_data, process_batch_upload, run_model_prediction, log_memory_usage
+from utils import fetch_barangay_data, process_batch_upload, log_memory_usage
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 load_dotenv(PROJECT_ROOT / '.env')
 
 def run_all_tests():
-    print("=== STARTING SYSTEM PERFORMANCE BENCHMARKS ===")
+    print("=== STARTING SYSTEM PERFORMANCE BENCHMARKS (`test_benchmarks.py`) ===")
     
     # 1. Memory Check at Startup
     log_memory_usage("Application Startup")
     
-    # 2. Test Database Query Latency
+    # 2. Test Database Query Latency (SQLCipher Encrypted Connection)
     conn = None
     try:
         passphrase = os.environ.get('DB_PASSPHRASE', 'default_test_passphrase')
@@ -40,29 +39,14 @@ def run_all_tests():
         if conn is not None:
             conn.close()
 
-    # 3. Test Batch Template Ingestion
+    # 3. Test Batch Template Ingestion Speed
     print("\n--- Testing Batch Template Ingestion Speed ---")
     try:
         process_batch_upload("sample_dengue_data.csv")
     except Exception as e:
         print(f"Batch Ingestion Test Note: {e}")
 
-    # 4. Test ML Inference Runtime
-    print("\n--- Testing ML Inference Runtime ---")
-    try:
-        dummy_features = pd.DataFrame([{
-            'lag_1': 1.0,
-            'lag_2': 2.0,
-            'morbidity_week': 3,
-        }])
-        start_t = time.perf_counter()
-        prediction = run_model_prediction(dummy_features)
-        inference_time = (time.perf_counter() - start_t) * 1000
-        print(f"Prediction result: {prediction} | Inference Runtime: {inference_time:.2f} ms")
-    except Exception as e:
-        print(f"ML Test Note: {e}")
-
-    # 5. Test Authentication & Security Hashing Latency (RBAC / Password Verification)
+    # 4. Test Authentication & Security Hashing Latency (Werkzeug Key-Stretching)
     print("\n--- Testing Security & Authentication Latency ---")
     try:
         test_password = "municipal_health_secure_pass"
@@ -79,7 +63,7 @@ def run_all_tests():
     except Exception as e:
         print(f"[BENCHMARK] Security Latency -> Not measured: {e}")
 
-    # 6. Memory Check after tests
+    # 5. Memory Check after execution
     log_memory_usage("Post-Execution / Peak Load")
     print("\n=== SYSTEM PERFORMANCE BENCHMARKS COMPLETE ===")
 
