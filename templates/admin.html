@@ -277,4 +277,41 @@
     </nav>
     {% endif %}
 </div>
+
+{% if user.username == 'admin' and user.role == 'Admin' %}
+<section class="card border-danger shadow-sm p-4 mt-4" aria-labelledby="delete-dengue-data-title">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+        <div>
+            <h5 id="delete-dengue-data-title" class="fw-bold text-danger mb-1">Danger Zone</h5>
+            <p class="text-muted small mb-0">Permanently remove all dengue case records and their record audit history. User accounts will remain.</p>
+        </div>
+        <button type="button" class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteDengueDataModal">
+            Delete All Dengue Data
+        </button>
+    </div>
+</section>
+
+<div class="modal fade" id="deleteDengueDataModal" tabindex="-1" aria-labelledby="deleteDengueDataModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold text-danger" id="deleteDengueDataModalTitle">Delete all dengue data?</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cancel"></button>
+            </div>
+            <form method="POST" action="{{ url_for('delete_all_dengue_data') }}">
+                <input type="hidden" name="csrf_token" value="{{ deletion_csrf_token }}">
+                <div class="modal-body">
+                    <p>This permanently deletes every dengue case record, including archived records, and all record edit/archive audit history. User accounts and permissions will remain. This action cannot be undone.</p>
+                    <label for="delete-dengue-data-confirmation" class="form-label">Type <strong>DELETE</strong> to confirm.</label>
+                    <input type="text" class="form-control" id="delete-dengue-data-confirmation" name="confirmation" required pattern="DELETE" autocomplete="off">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-danger">Permanently Delete All Dengue Data</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
 {% endblock %}

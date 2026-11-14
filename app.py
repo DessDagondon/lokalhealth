@@ -6,7 +6,18 @@ import secrets
 from io import BytesIO, StringIO
 from datetime import date, datetime, timedelta
 import sys
-from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify, abort
+from flask import (
+    Flask,
+    abort,
+    flash,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    session,
+    url_for,
+)
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 import pandas as pd
@@ -26,6 +37,7 @@ load_dotenv()
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'lokalhealth-epidemiological-secret-key-2026'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+DENGUE_DATA_DELETE_CSRF_SESSION_KEY = 'delete_dengue_data_csrf_token'
 os.makedirs(app.instance_path, exist_ok=True)
 DB_PASSPHRASE = os.environ.get('DB_PASSPHRASE')
 
@@ -126,7 +138,7 @@ class DengueRecord(db.Model):
     sex = db.Column(db.String(10), nullable=False)
     clinical_classification = db.Column(db.String(100), nullable=True)
     case_classification = db.Column(db.String(100), nullable=True)
-    sync_status = db.Column(db.String(20), default='Synced')  # 'Manual/Local' or 'Synced'
+    sync_status = db.Column(db.String(20), default='Local')
     is_archived = db.Column(db.Boolean, default=False, server_default=db.false(), nullable=False)
 
 
@@ -1468,7 +1480,7 @@ def records():
                                 sex=str(row.get('sex') or 'Unavailable').strip() or 'Unavailable',
                                 clinical_classification=str(row.get('clinical_classification') or 'Unavailable').strip() or 'Unavailable',
                                 case_classification=str(row.get('case_classification') or 'Unavailable').strip() or 'Unavailable',
-                                sync_status='Synced',
+                                sync_status='Local',
                                 is_archived=False,
                             )
                             db.session.add(record)
@@ -2194,6 +2206,12 @@ def admin():
     if current_user.role != 'Admin':
         flash('Unauthorized access: Admin permissions required.', 'error')
         return redirect(url_for('dashboard'))
+    deletion_csrf_token = None
+    if current_user.username == 'admin':
+        deletion_csrf_token = session.get(DENGUE_DATA_DELETE_CSRF_SESSION_KEY)
+        if deletion_csrf_token is None:
+            deletion_csrf_token = secrets.token_urlsafe(32)
+            session[DENGUE_DATA_DELETE_CSRF_SESSION_KEY] = deletion_csrf_token
     users = User.query.all()
     action_filter = request.args.get('action', '').strip().upper()
     if action_filter not in {'CREATE', 'EDIT', 'ARCHIVE'}:
@@ -2225,7 +2243,41 @@ def admin():
         audit_logs=audit_logs,
         audit_action=action_filter,
         audit_search=audit_search,
+        deletion_csrf_token=deletion_csrf_token,
     )
+
+@app.route('/admin/delete-all-dengue-data', methods=['POST'])
+@login_required
+def delete_all_dengue_data():
+    if current_user.role != 'Admin' or current_user.username != 'admin':
+        abort(403)
+
+    submitted_token = request.form.get('csrf_token', '')
+    expected_token = session.get(DENGUE_DATA_DELETE_CSRF_SESSION_KEY, '')
+    if not expected_token or not secrets.compare_digest(expected_token, submitted_token):
+        abort(400)
+
+    if request.form.get('confirmation', '').strip() != 'DELETE':
+        flash('Deletion cancelled. Type DELETE exactly to confirm.', 'error')
+        return redirect(url_for('admin'))
+
+    try:
+        deleted_records = DengueRecord.query.delete(synchronize_session=False)
+        deleted_audit_logs = RecordAuditLog.query.delete(synchronize_session=False)
+        db.session.commit()
+    except SQLAlchemyError:
+        db.session.rollback()
+        app.logger.exception('Failed to delete all dengue data.')
+        flash('Dengue data could not be deleted. No changes were saved.', 'error')
+        return redirect(url_for('admin'))
+
+    session.pop(DENGUE_DATA_DELETE_CSRF_SESSION_KEY, None)
+    flash(
+        f'Deleted {deleted_records} dengue records and '
+        f'{deleted_audit_logs} record audit entries. User accounts were kept.',
+        'success',
+    )
+    return redirect(url_for('admin'))
 
 # ==========================================
 # DATABASE INITIALIZATION & SEEDING

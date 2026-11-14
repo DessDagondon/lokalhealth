@@ -122,7 +122,7 @@
                                 <th>Age/Sex</th>
                                 <th>Clinical Classification</th>
                                 <th>Case Classification</th>
-                                <th>Sync</th>
+                                <th>Storage</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -133,7 +133,7 @@
                                 <td>{{ record.age if record.age is not none else 'Unavailable' }} / {{ record.sex }}</td>
                                 <td>{{ record.clinical_classification }}</td>
                                 <td>{{ record.case_classification or 'N/A' }}</td>
-                                <td><span class="badge bg-success">{{ 'Manual' if record.sync_status == 'Local' else record.sync_status }}</span></td>
+                                <td><span class="badge bg-success">Local</span></td>
                             </tr>
                             {% else %}
                             <tr>
@@ -197,7 +197,7 @@
                                 <th>Age/Sex</th>
                                 <th>Clinical Classification</th>
                                 <th>Case Classification</th>
-                                <th>Sync</th>
+                                <th>Storage</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -208,7 +208,7 @@
                                 <td>{{ record.age if record.age is not none else 'Unavailable' }} / {{ record.sex }}</td>
                                 <td>{{ record.clinical_classification }}</td>
                                 <td>{{ record.case_classification or 'N/A' }}</td>
-                                <td><span class="badge bg-success">{{ 'Manual' if record.sync_status == 'Local' else record.sync_status }}</span></td>
+                                <td><span class="badge bg-success">Local</span></td>
                             </tr>
                             {% else %}
                             <tr>

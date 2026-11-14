@@ -113,7 +113,15 @@ class FunctionalRecordManagementTest(IsolatedDatabaseTestCase):
             self.assertEqual(records['MANUAL-FLOW-001'].year, year)
             self.assertEqual(records['CSV-FLOW-001'].barangay, 'Bago Aplaya')
             self.assertEqual(records['EXCEL-FLOW-001'].clinical_classification, 'Severe Dengue')
+            self.assertEqual({record.sync_status for record in records.values()}, {'Local'})
             manual_record_id = records['MANUAL-FLOW-001'].id
+
+        records_page = client.get('/records')
+        records_body = records_page.get_data(as_text=True)
+        self.assertIn('<th>Storage</th>', records_body)
+        self.assertNotIn('<th>Sync</th>', records_body)
+        self.assertNotIn('Synced', records_body)
+        self.assertNotIn('>Manual</span>', records_body)
 
         edit = client.post(
             f'/records/edit/{manual_record_id}',

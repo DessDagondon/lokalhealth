@@ -6,7 +6,14 @@ import sqlcipher3
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 
-from app import app, db, DengueRecord, RecordAuditLog, User
+from app import (
+    DENGUE_DATA_DELETE_CSRF_SESSION_KEY,
+    app,
+    db,
+    DengueRecord,
+    RecordAuditLog,
+    User,
+)
 
 
 class DataRepositoryRouteTest(unittest.TestCase):
@@ -165,7 +172,11 @@ class DataRepositoryRouteTest(unittest.TestCase):
             repository_response = client.get('/repository')
             self.assertEqual(records_response.status_code, 200)
             self.assertEqual(repository_response.status_code, 200)
-            self.assertNotIn('manual_entry', records_response.get_data(as_text=True))
+            records_body = records_response.get_data(as_text=True)
+            self.assertNotIn('manual_entry', records_body)
+            self.assertIn('<th>Storage</th>', records_body)
+            self.assertNotIn('Synced', records_body)
+            self.assertEqual(records_body.count('>Local</span>'), 3)
             self.assertNotIn(f'/records/edit/{record_id}', repository_response.get_data(as_text=True))
 
             create_response = client.post('/records', data={
@@ -293,6 +304,74 @@ class DataRepositoryRouteTest(unittest.TestCase):
             self.assertIn('999', body)
             self.assertNotIn('audit-user', body)
             self.assertNotIn('created-case', body)
+
+    def test_only_primary_admin_can_access_delete_all_dengue_data(self):
+        with app.test_client() as client:
+            client.post('/login', data={'username': 'repoadmin', 'password': 'pass'}, follow_redirects=False)
+            admin_page = client.get('/admin')
+            self.assertEqual(admin_page.status_code, 200)
+            self.assertNotIn('Delete All Dengue Data', admin_page.get_data(as_text=True))
+
+            response = client.post(
+                '/admin/delete-all-dengue-data',
+                data={'confirmation': 'DELETE'},
+                follow_redirects=False,
+            )
+
+        self.assertEqual(response.status_code, 403)
+        with app.app_context():
+            self.assertEqual(DengueRecord.query.count(), 3)
+
+    def test_primary_admin_delete_requires_confirmation_and_clears_records_and_audit(self):
+        with app.app_context():
+            db.session.add(RecordAuditLog(
+                record_id=1,
+                username='repoadmin',
+                action_type='EDIT',
+                field_changed='age',
+                old_value='10',
+                new_value='11',
+            ))
+            db.session.commit()
+
+        with app.test_client() as client:
+            client.post('/login', data={'username': 'admin', 'password': 'Admin123!'}, follow_redirects=False)
+            admin_page = client.get('/admin')
+            body = admin_page.get_data(as_text=True)
+            self.assertEqual(admin_page.status_code, 200)
+            self.assertIn('Delete All Dengue Data', body)
+            with client.session_transaction() as client_session:
+                csrf_token = client_session[DENGUE_DATA_DELETE_CSRF_SESSION_KEY]
+
+            invalid_token_response = client.post(
+                '/admin/delete-all-dengue-data',
+                data={'csrf_token': 'invalid', 'confirmation': 'DELETE'},
+                follow_redirects=False,
+            )
+            self.assertEqual(invalid_token_response.status_code, 400)
+
+            wrong_confirmation_response = client.post(
+                '/admin/delete-all-dengue-data',
+                data={'csrf_token': csrf_token, 'confirmation': 'delete'},
+                follow_redirects=False,
+            )
+            self.assertEqual(wrong_confirmation_response.status_code, 302)
+            with app.app_context():
+                self.assertEqual(DengueRecord.query.count(), 3)
+                self.assertEqual(RecordAuditLog.query.count(), 1)
+
+            delete_response = client.post(
+                '/admin/delete-all-dengue-data',
+                data={'csrf_token': csrf_token, 'confirmation': 'DELETE'},
+                follow_redirects=False,
+            )
+
+        self.assertEqual(delete_response.status_code, 302)
+        with app.app_context():
+            self.assertEqual(DengueRecord.query.count(), 0)
+            self.assertEqual(RecordAuditLog.query.count(), 0)
+            self.assertIsNotNone(User.query.filter_by(username='admin').first())
+            self.assertIsNotNone(User.query.filter_by(username='repoadmin').first())
 
     def test_late_manual_and_uploaded_records_stay_active_after_year_archived(self):
         with app.test_client() as client:
