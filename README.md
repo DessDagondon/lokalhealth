@@ -1,8 +1,9 @@
 # LokalHealth Dengue Surveillance
 
 LokalHealth is a Flask web application for dengue case surveillance. It provides
-case-record management, a surveillance dashboard, weekly trend and forecast
-views, barangay summaries, reports, and basic user administration.
+case-record management, a surveillance dashboard with a primary monthly
+seasonal forecast and barangay pattern clusters, complementary weekly alert
+views, reports, and basic user administration.
 
 This guide covers downloading the source, installing the required software and
 Python packages, and starting the application. Downloading the ZIP gives you

@@ -6,6 +6,7 @@ from app import (
     app,
     calculate_dashboard_quantile,
     classify_dashboard_case,
+    cluster_monthly_barangay_profiles,
     db,
     evaluate_dashboard_alert,
     get_dashboard_trend,
@@ -249,6 +250,142 @@ class DashboardSpecificationTest(IsolatedDatabaseTestCase):
         self.assertEqual([item['predicted_cases'] for item in forecast['forecasts']], [0, 0, 0])
         self.assertIsNone(forecast['rmse_rf'])
         self.assertIsNone(forecast['rmse_naive'])
+
+    def test_monthly_forecast_uses_same_month_baseline_and_preserves_unreported_gaps(self):
+        current_year = datetime.now().year
+        with app.app_context():
+            case_number = 1
+            for year, count in (
+                (current_year - 3, 2),
+                (current_year - 2, 6),
+                (current_year - 1, 10),
+            ):
+                for _ in range(count):
+                    db.session.add(DengueRecord(
+                        case_id=f'MONTHLY-HISTORY-{case_number}',
+                        year=year,
+                        morbidity_month=4,
+                        district='Talomo',
+                        barangay='Monthly Barangay',
+                        age=24,
+                        sex='F',
+                        clinical_classification='Dengue without Warning Signs',
+                        case_classification='Confirmed',
+                        sync_status='Synced',
+                    ))
+                    case_number += 1
+            for _ in range(4):
+                db.session.add(DengueRecord(
+                    case_id=f'MONTHLY-CURRENT-{case_number}',
+                    year=current_year,
+                    morbidity_month=3,
+                    district='Talomo',
+                    barangay='Monthly Barangay',
+                    age=24,
+                    sex='F',
+                    clinical_classification='Dengue without Warning Signs',
+                    case_classification='Confirmed',
+                    sync_status='Synced',
+                ))
+                case_number += 1
+            db.session.commit()
+
+            trend = get_dashboard_trend(current_year)
+
+        self.assertEqual(trend['monthly_actual'][2], 4)
+        self.assertIsNone(trend['monthly_actual'][3])
+        self.assertEqual(trend['monthly_median'][3], 6)
+        self.assertEqual(trend['monthly_baseline_75th'][3], 8)
+        self.assertEqual(trend['monthly_baseline_counts'][3], 3)
+
+        client = app.test_client()
+        login = client.post(
+            '/login',
+            data={'username': 'admin', 'password': 'Admin123!'},
+            follow_redirects=False,
+        )
+        self.assertEqual(login.status_code, 302)
+        forecast = client.get(
+            f'/api/dashboard/monthly-forecast?year={current_year}'
+        ).get_json()
+        self.assertEqual(forecast['source_month'], 3)
+        self.assertEqual(forecast['target_month'], 4)
+        self.assertEqual(forecast['predicted_cases'], 6)
+        self.assertEqual(forecast['naive_persistence'], 4)
+        self.assertEqual(forecast['historical_baseline_count'], 3)
+
+        dashboard = client.get(f'/dashboard?year={current_year}').get_data(as_text=True)
+        self.assertLess(
+            dashboard.index('PRIMARY FORECAST · ONE MONTH AHEAD'),
+            dashboard.index('COMPLEMENTARY TIMELY ALERT · MORBIDITY WEEK'),
+        )
+        self.assertIn('Barangays with similar seasonal profiles', dashboard)
+        self.assertIn('Monthly forecast and barangay seasonality are the primary analysis', dashboard)
+
+    def test_monthly_barangay_clustering_groups_similar_normalized_profiles(self):
+        records = []
+        for barangay, months in (
+            ('Profile A', (1, 1, 3)),
+            ('Profile B', (1, 1, 1, 1, 3, 3)),
+            ('Profile C', (7,)),
+            ('Profile D', (7, 7)),
+        ):
+            for month in months:
+                records.append(DengueRecord(
+                    morbidity_month=month,
+                    district='Talomo',
+                    barangay=barangay,
+                    case_classification='Confirmed',
+                ))
+        records.append(DengueRecord(
+            morbidity_month=10,
+            district='Talomo',
+            barangay='Suspected only',
+            case_classification='Suspected',
+        ))
+
+        result = cluster_monthly_barangay_profiles(records)
+
+        self.assertEqual(result['location_count'], 4)
+        self.assertEqual(len(result['clusters']), 2)
+        clustered_locations = [
+            {location['name'] for location in cluster['locations']}
+            for cluster in result['clusters']
+        ]
+        self.assertIn({'Profile A', 'Profile B'}, clustered_locations)
+        self.assertIn({'Profile C', 'Profile D'}, clustered_locations)
+
+    def test_monthly_forecast_reports_unavailable_when_selected_year_has_no_month_data(self):
+        current_year = datetime.now().year
+        with app.app_context():
+            db.session.add(DengueRecord(
+                case_id='WEEKLY-ONLY',
+                year=current_year,
+                morbidity_week=1,
+                district='Talomo',
+                barangay='Weekly Barangay',
+                age=24,
+                sex='F',
+                clinical_classification='Dengue without Warning Signs',
+                case_classification='Confirmed',
+                sync_status='Synced',
+            ))
+            db.session.commit()
+
+        client = app.test_client()
+        login = client.post(
+            '/login',
+            data={'username': 'admin', 'password': 'Admin123!'},
+            follow_redirects=False,
+        )
+        self.assertEqual(login.status_code, 302)
+        forecast = client.get(
+            f'/api/dashboard/monthly-forecast?year={current_year}'
+        ).get_json()
+
+        self.assertFalse(forecast['monthly_data_available'])
+        self.assertIsNone(forecast['source_month'])
+        self.assertIsNone(forecast['predicted_cases'])
 
 
 if __name__ == '__main__':

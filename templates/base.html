@@ -7,24 +7,30 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         :root {
-            font-size: clamp(16px, calc(15px + 0.2vw), 18px);
+            font-size: clamp(18px, calc(17px + 0.15vw), 20px);
         }
 
         body {
             min-width: 320px;
             font-size: 1rem;
-            line-height: 1.5;
+            line-height: 1.6;
+            color: #1d2c38;
         }
 
         h1, h2, h3, h4, h5, h6 {
             line-height: 1.25;
+            color: #18374d;
         }
 
-        h1 { font-size: clamp(1.75rem, 1.45rem + 0.8vw, 2.35rem); }
-        h2 { font-size: clamp(1.5rem, 1.3rem + 0.55vw, 2rem); }
-        h3 { font-size: clamp(1.3rem, 1.15rem + 0.4vw, 1.65rem); }
-        h4 { font-size: clamp(1.15rem, 1.05rem + 0.25vw, 1.4rem); }
-        h5 { font-size: clamp(1.05rem, 1rem + 0.15vw, 1.2rem); }
+        h1 { font-size: clamp(2rem, 1.7rem + 0.8vw, 2.55rem); }
+        h2 { font-size: clamp(1.75rem, 1.5rem + 0.55vw, 2.2rem); }
+        h3 { font-size: clamp(1.5rem, 1.3rem + 0.4vw, 1.8rem); }
+        h4 { font-size: clamp(1.3rem, 1.2rem + 0.25vw, 1.55rem); }
+        h5 { font-size: clamp(1.15rem, 1.1rem + 0.15vw, 1.35rem); }
+
+        p {
+            line-height: 1.65;
+        }
 
         .app-container {
             width: 100%;
@@ -38,12 +44,24 @@
         }
 
         .app-navbar .navbar-brand {
-            font-size: 1.25rem;
+            display: inline-flex;
+            min-height: 2.85rem;
+            align-items: center;
+            font-size: 1.4rem;
+        }
+
+        .app-navbar .navbar-toggler {
+            min-width: 2.85rem;
+            min-height: 2.85rem;
         }
 
         .app-navbar .nav-link {
-            padding-inline: 0.7rem;
-            font-size: 0.95rem;
+            display: inline-flex;
+            min-height: 2.85rem;
+            align-items: center;
+            padding-inline: 0.8rem;
+            font-size: 1rem;
+            font-weight: 650;
         }
 
         .app-user {
@@ -56,29 +74,133 @@
         }
 
         .small, small {
-            font-size: max(0.875em, 0.875rem);
+            font-size: max(0.9em, 0.9rem);
         }
 
         .form-label,
         .form-check-label {
-            font-size: 0.925rem;
+            color: #263b4a;
+            font-size: 1rem;
+            font-weight: 650;
         }
 
         .form-control,
         .form-select {
-            min-height: 2.65rem;
+            min-height: 3rem;
+            border-color: #9aaab5;
             font-size: 1rem;
         }
 
         .btn {
-            min-height: 2.5rem;
-            font-size: 0.95rem;
+            min-height: 2.85rem;
+            font-size: 1rem;
+            font-weight: 650;
         }
 
         .btn-sm,
         .btn-group-sm > .btn {
-            min-height: 2.25rem;
-            font-size: 0.875rem;
+            min-height: 2.6rem;
+            font-size: 0.95rem;
+        }
+
+        .form-check-input {
+            width: 1.2em;
+            height: 1.2em;
+            margin-top: 0.2em;
+            border-color: #697d8b;
+        }
+
+        .rating-scale-anchors {
+            font-size: 0.9rem;
+            font-weight: 600;
+        }
+
+        .table {
+            font-size: 1rem;
+        }
+
+        .table:not(.table-sm) > :not(caption) > * > * {
+            padding-block: 0.7rem;
+        }
+
+        .table thead th {
+            font-weight: 750;
+        }
+
+        .badge {
+            font-size: 0.9rem;
+            font-weight: 700;
+        }
+
+        .pagination .page-link {
+            display: inline-flex;
+            min-height: 2.75rem;
+            align-items: center;
+            justify-content: center;
+            padding-inline: 0.9rem;
+        }
+
+        .app-main a:not(.btn):not(.page-link) {
+            text-underline-offset: 0.15em;
+            text-decoration-thickness: 0.08em;
+        }
+
+        .app-main .text-muted {
+            color: #53636e !important;
+        }
+
+        .form-control::placeholder {
+            color: #5e6d77;
+            opacity: 1;
+        }
+
+        :focus-visible {
+            outline: 3px solid #145f91 !important;
+            outline-offset: 3px;
+            box-shadow: 0 0 0 2px #fff !important;
+        }
+
+        .skip-link {
+            position: fixed;
+            z-index: 2000;
+            top: 0.5rem;
+            left: 0.5rem;
+            padding: 0.75rem 1rem;
+            transform: translateY(-160%);
+            border-radius: 0.5rem;
+            background: #fff;
+            color: #123b55;
+            font-weight: 750;
+            box-shadow: 0 0 0 2px #145f91;
+        }
+
+        .skip-link:focus {
+            transform: translateY(0);
+        }
+
+        .card {
+            border-radius: 0.85rem;
+        }
+
+        .modal-title {
+            font-weight: 750;
+        }
+
+        .btn-close {
+            min-width: 2.75rem;
+            min-height: 2.75rem;
+            background-size: 1rem;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *,
+            *::before,
+            *::after {
+                scroll-behavior: auto !important;
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+            }
         }
 
         .card.p-3 {
@@ -188,9 +310,10 @@
     </style>
 </head>
 <body class="bg-light">
+    <a class="skip-link" href="#main-content">Skip to main content</a>
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4 app-navbar">
         <div class="app-container d-flex flex-wrap">
-            <a class="navbar-brand fw-bold" href="#">LokalHealth</a>
+            <a class="navbar-brand fw-bold" href="{{ url_for('dashboard') }}">LokalHealth</a>
             {% if current_user.is_authenticated %}
             <button class="navbar-toggler ms-auto" type="button" data-bs-toggle="collapse" data-bs-target="#primaryNavigation" aria-controls="primaryNavigation" aria-expanded="false" aria-label="Toggle navigation">
                 <span class="navbar-toggler-icon"></span>
@@ -217,7 +340,7 @@
         </div>
     </nav>
 
-    <main class="app-container app-main">
+    <main class="app-container app-main" id="main-content">
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
                 {% for category, message in messages %}

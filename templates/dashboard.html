@@ -9,7 +9,12 @@
         <div>
             <p class="dashboard-eyebrow">LOCAL DENGUE SURVEILLANCE</p>
             <h1>Dengue overview</h1>
-            <p class="dashboard-subtitle">Weekly confirmed cases, historical thresholds, and barangays to review.</p>
+            <p class="dashboard-subtitle">Monthly forecast and barangay seasonality are the primary analysis. Weekly alerts are complementary timely signals.</p>
+            <button type="button" class="btn btn-outline-primary btn-sm mt-2"
+                    data-bs-toggle="modal" data-bs-target="#dashboard-help-modal"
+                    aria-controls="dashboard-help-modal" aria-haspopup="dialog">
+                How to read this dashboard
+            </button>
         </div>
         <form method="get" action="{{ url_for('dashboard') }}" class="year-filter">
             <label for="surveillance-year">Surveillance year</label>
@@ -23,149 +28,278 @@
         </form>
     </header>
 
-    <section class="risk-summary risk-{{ risk_class }}" aria-labelledby="risk-summary-title">
-        <div class="risk-summary-main">
-            <div class="risk-label-row">
-                <span class="risk-indicator" aria-hidden="true"></span>
-                <span class="risk-label">Citywide · {{ trend.risk_label }}</span>
-                {% if active_week %}
-                <span class="risk-week">MW {{ active_week }}</span>
-                {% endif %}
-            </div>
-            <h2 id="risk-summary-title">
-                {% if trend.weekly_data_available and trend.has_baseline_data %}
-                    {{ trend.recommendation }}
-                {% elif not trend.weekly_data_available %}
-                    Weekly status unavailable
-                {% else %}
-                    Historical reference only
-                {% endif %}
-            </h2>
-            <p class="risk-explanation">
-                {% if trend.weekly_data_available %}
-                    {{ trend.current_count }} confirmed and {{ current_week_suspected }} suspected case records in the latest recorded week.
-                    {% if trend.has_baseline_data %}
-                    Risk tier compares confirmed records with this week's historical median (P50) and upper threshold (P75).
-                    {% endif %}
-                {% else %}
-                    No usable morbidity-week records are available for {{ selected_year }}. A weekly risk tier cannot be calculated.
-                {% endif %}
-            </p>
-            {% if trend.weekly_data_available and trend.has_baseline_data %}
-            <p class="risk-action">{{ trend.action_required }}</p>
-            {% elif not trend.has_baseline_data %}
-            <p class="risk-action">A historical comparison is not available for this year.</p>
-            {% endif %}
-        </div>
-        <div class="risk-summary-side">
-            {% if trend.weekly_data_available %}
-            <div class="risk-current-count">{{ trend.current_count }}</div>
-            <div class="risk-current-caption">confirmed cases · MW {{ active_week }}</div>
-            {% else %}
-            <div class="risk-current-count risk-current-na">—</div>
-            <div class="risk-current-caption">no weekly count</div>
-            {% endif %}
-            <div class="risk-date">{{ trend.week_date_range if active_week else selected_year }}</div>
-        </div>
-    </section>
-
-    <section class="metric-grid" aria-label="Latest week metrics">
-        <article class="metric-card metric-card-primary">
-            <span class="metric-label">Confirmed cases</span>
-            <strong class="metric-value">{{ current_week_confirmed if current_week_confirmed is not none else '—' }}</strong>
-            <span class="metric-caption">{% if active_week %}Latest recorded week · MW {{ active_week }}{% else %}Latest recorded week unavailable{% endif %}</span>
-        </article>
-        <article class="metric-card">
-            <span class="metric-label">Historical median · P50</span>
-            <strong class="metric-value">{{ '%g'|format(trend.current_median) if trend.has_baseline_data and trend.weekly_data_available else '—' }}</strong>
-            <span class="metric-caption">Citywide · same morbidity week · {{ trend.baseline_years|length }} baseline year(s)</span>
-        </article>
-        <article class="metric-card">
-            <span class="metric-label">Upper threshold · P75</span>
-            <strong class="metric-value">{{ '%g'|format(trend.current_epidemic_threshold) if trend.has_baseline_data and trend.weekly_data_available else '—' }}</strong>
-            <span class="metric-caption">Citywide · above this level is the red tier</span>
-        </article>
-        <article class="metric-card">
-            <span class="metric-label">Locations represented</span>
-            <strong class="metric-value">{{ reporting_location_count if active_week else '—' }}</strong>
-            <span class="metric-caption">District/barangay locations with records in MW {{ active_week if active_week else '—' }}; not a coverage rate</span>
-        </article>
-    </section>
-
-    <section class="data-basis" aria-labelledby="data-basis-title">
-        <span class="data-basis-icon" aria-hidden="true">i</span>
-        <div class="data-basis-content">
-            <h2 id="data-basis-title">How to analyse these results</h2>
-            <div class="data-basis-grid">
-                <p><strong>What the dashboard does</strong>It summarizes the records entered, compares citywide weekly confirmed cases with historical P50/P75 thresholds, and helps prioritize barangays for review. Thresholds show how this week compares with the available historical baseline; they do not confirm an outbreak.</p>
-                <p><strong>What the naïve forecast means</strong>It carries the latest recorded week's confirmed count forward as next week's estimate. It does not learn a trend or estimate the probability of an epidemic, and its result is not 100% certain.</p>
-                <p><strong>How to act on it</strong>Treat the forecast and risk tier as awareness signals for possible dengue activity as not a guarantee, diagnosis, or official outbreak declaration. Verify recent reports and follow local health-officer guidance before making decisions.</p>
-                <p><strong>Data limitations</strong>Only confirmed cases set risk tiers; suspected cases are shown for context. The database does not track zero-case submissions. Missing current-year weeks are gaps, not confirmed zeroes; missing historical weeks are treated as zero under the thesis method.</p>
-            </div>
-            <p class="data-basis-totals">Selected year {{ selected_year }} records: {{ total_records }} total · {{ confirmed_cases }} confirmed · {{ suspected_cases }} suspected.</p>
-        </div>
-    </section>
-
-    <div class="dashboard-content-grid">
-        <section class="panel trend-panel" aria-labelledby="weekly-trend-title">
+    <div class="dashboard-content-grid monthly-primary-grid">
+        <section class="panel trend-panel" aria-labelledby="monthly-trend-title">
             <div class="panel-heading">
                 <div>
-                    <p class="panel-kicker">HISTORICAL COMPARISON</p>
-                    <h2 id="weekly-trend-title">Weekly confirmed cases</h2>
-                    <p>Current year compared with its same-week historical baseline.</p>
+                    <p class="panel-kicker">PRIMARY VIEW · MORBIDITY MONTH</p>
+                    <h2 id="monthly-trend-title">Monthly confirmed cases</h2>
+                    <p>Reported monthly totals compared with the same-month historical baseline.</p>
                 </div>
                 <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('repository') }}">View records</a>
             </div>
 
-            {% if trend.weekly_data_available %}
+            {% if trend.monthly_data_available %}
             <div class="chart-legend" aria-label="Chart series">
-                <span><i class="legend-swatch legend-actual"></i>{{ selected_year }} confirmed</span>
+                <span><i class="legend-swatch legend-actual"></i>{{ selected_year }} reported confirmed</span>
                 <span><i class="legend-swatch legend-median"></i>Historical median · P50</span>
                 <span><i class="legend-swatch legend-threshold"></i>Upper threshold · P75</span>
-                <span><i class="legend-swatch legend-forecast"></i><span id="forecast-chart-legend">Naïve forecast · next week</span></span>
+                <span><i class="legend-swatch legend-forecast"></i>Monthly forecast</span>
             </div>
             <div class="chart-container">
-                <canvas id="weekly-case-chart" role="img" aria-label="Weekly confirmed cases, historical P50 and P75 thresholds, and a distinct one-week naïve persistence forecast"></canvas>
+                <canvas id="monthly-case-chart" role="img" aria-label="Reported monthly confirmed cases with same-month historical median, upper threshold, and next-month forecast"></canvas>
             </div>
             <p class="chart-footnote">
-                Baseline: {{ trend.baseline_years|join(', ') if trend.baseline_years else 'not available' }}.
-                P50 is the middle ordered annual value; P75 interpolates between the second and third values when three years are available.
+                Monthly baseline years with morbidity-month records: {{ trend.monthly_baseline_years|join(', ') if trend.monthly_baseline_years else 'not available' }}.
+                Months without records are shown as gaps, not zero cases.
             </p>
             {% else %}
             <div class="empty-state">
-                <strong>Weekly trend cannot be shown</strong>
-                <p>No valid morbidity weeks were found for {{ selected_year }}. Add or correct week values in the records before using weekly comparisons.</p>
+                <strong>Monthly trend cannot be shown</strong>
+                <p>No valid morbidity months were found for {{ selected_year }}. Add or correct month values before using monthly comparisons.</p>
             </div>
             {% endif %}
         </section>
 
-        <section class="panel forecast-panel" aria-labelledby="forecast-title">
-            <p class="panel-kicker">ONE-WEEK AHEAD</p>
-            <h2 id="forecast-title">Naïve persistence</h2>
-            <p class="panel-intro">Carries the latest recorded week's confirmed count forward as next week's reference estimate. It is not a certainty or an epidemic probability.</p>
-            <div id="forecast-result" class="forecast-result" aria-live="polite">
-                {% if trend.weekly_data_available %}
-                Loading forecast…
+        <section class="panel forecast-panel monthly-forecast-panel" aria-labelledby="monthly-forecast-title">
+            <p class="panel-kicker">PRIMARY FORECAST · ONE MONTH AHEAD</p>
+            <h2 id="monthly-forecast-title">Historical seasonal median</h2>
+            <p class="panel-intro">Uses the historical median for the next morbidity month. A monthly persistence reference is shown for comparison.</p>
+            <div id="monthly-forecast-result" class="forecast-result" aria-live="polite">
+                {% if trend.monthly_data_available %}
+                Loading monthly forecast…
                 {% else %}
-                Unavailable without a reported week
+                Unavailable without a reported month
                 {% endif %}
             </div>
-            <p id="forecast-detail" class="forecast-detail">
-                Use as an awareness signal for possible dengue activity; verify reports and local guidance.
+            <p id="monthly-forecast-detail" class="forecast-detail">
+                This is a planning reference, not a certainty, diagnosis, or epidemic probability.
             </p>
             <div class="forecast-method">
-                <span class="method-equation">ŷ<sub>t+1</sub> = y<sub>t</sub></span>
-                <span>Current observed count carried forward</span>
+                <span class="method-equation">P50<sub>month</sub></span>
+                <span>Same-month historical confirmed-case median</span>
             </div>
         </section>
+    </div>
+
+    <section class="metric-grid" aria-label="Latest reported month metrics">
+        <article class="metric-card metric-card-primary">
+            <span class="metric-label">Confirmed cases</span>
+            <strong class="metric-value">{{ trend.monthly_actual[current_month - 1] if current_month else '—' }}</strong>
+            <span class="metric-caption">{% if current_month %}Latest reported month · {{ month_names[current_month - 1] }}{% else %}No reported morbidity month{% endif %}</span>
+        </article>
+        <article class="metric-card">
+            <span class="metric-label">Historical median · P50</span>
+            <strong class="metric-value">{{ '%g'|format(trend.monthly_median[current_month - 1]) if current_month and trend.monthly_median[current_month - 1] is not none else '—' }}</strong>
+            <span class="metric-caption">Same morbidity month · {{ trend.monthly_baseline_counts[current_month - 1] if current_month else 0 }} baseline year(s)</span>
+        </article>
+        <article class="metric-card">
+            <span class="metric-label">Upper reference · P75</span>
+            <strong class="metric-value">{{ '%g'|format(trend.monthly_baseline_75th[current_month - 1]) if current_month and trend.monthly_baseline_75th[current_month - 1] is not none else '—' }}</strong>
+            <span class="metric-caption">Historical comparison, not an outbreak declaration</span>
+        </article>
+        <article class="metric-card">
+            <span class="metric-label">Locations represented</span>
+            <strong class="metric-value">{{ monthly_location_count if current_month else '—' }}</strong>
+            <span class="metric-caption">Locations with records in the latest reported month; not a coverage rate</span>
+        </article>
+    </section>
+
+    <section class="panel clustering-panel" aria-labelledby="monthly-clusters-title">
+        <div class="panel-heading">
+            <div>
+                <p class="panel-kicker">MONTHLY PATTERN CLUSTERS</p>
+                <h2 id="monthly-clusters-title">Barangays with similar seasonal profiles</h2>
+                <p>Groups locations by the distribution of their confirmed records across morbidity months in {{ selected_year }}.</p>
+            </div>
+        </div>
+        {% if monthly_clustering.clusters %}
+        <div class="cluster-grid">
+            {% for cluster in monthly_clustering.clusters %}
+            <article class="cluster-card">
+                <h3>{{ cluster.label }}</h3>
+                <p class="cluster-summary">{{ cluster.location_count }} location(s) · {{ cluster.confirmed_cases }} confirmed records · peak recorded month: {{ month_names[cluster.peak_month - 1] }}</p>
+                <ul class="cluster-location-list">
+                    {% for location in cluster.locations %}
+                    <li>
+                        <span>{{ location.name }}{% if location.district %}<small>{{ location.district }}</small>{% endif %}</span>
+                        <strong>{{ location.confirmed_cases }}</strong>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </article>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <strong>Not enough distinct monthly profiles to form clusters</strong>
+            <p>At least two barangays with confirmed records in different morbidity-month patterns are needed.</p>
+        </div>
+        {% endif %}
+        <p class="chart-footnote">These descriptive groups are not risk tiers or predictions. Profiles are normalized by each location's total; missing records do not prove zero cases or complete reporting.</p>
+    </section>
+
+    <section class="weekly-complement" aria-labelledby="weekly-complement-title">
+        <div class="weekly-section-heading">
+            <p class="panel-kicker">COMPLEMENTARY TIMELY ALERT · MORBIDITY WEEK</p>
+            <h2 id="weekly-complement-title">Weekly surveillance signals</h2>
+            <p>Use these faster-changing indicators alongside—not instead of—the primary monthly forecast and seasonal clusters.</p>
+        </div>
+        <section class="risk-summary risk-{{ risk_class }}" aria-labelledby="risk-summary-title">
+            <div class="risk-summary-main">
+                <div class="risk-label-row">
+                    <span class="risk-indicator" aria-hidden="true"></span>
+                    <span class="risk-label">Weekly alert · {{ trend.risk_label }}</span>
+                    {% if active_week %}
+                    <span class="risk-week">MW {{ active_week }}</span>
+                    {% endif %}
+                </div>
+                <h2 id="risk-summary-title">
+                    {% if trend.weekly_data_available and trend.has_baseline_data %}
+                        {{ trend.recommendation }}
+                    {% elif not trend.weekly_data_available %}
+                        Weekly status unavailable
+                    {% else %}
+                        Historical reference only
+                    {% endif %}
+                </h2>
+                <p class="risk-explanation">
+                    {% if trend.weekly_data_available %}
+                        {{ trend.current_count }} confirmed and {{ current_week_suspected }} suspected case records in the latest recorded week.
+                        {% if trend.has_baseline_data %}
+                        Weekly risk tier compares confirmed records with this morbidity week's historical median (P50) and upper threshold (P75).
+                        {% endif %}
+                    {% else %}
+                        No usable morbidity-week records are available for {{ selected_year }}. A weekly risk tier cannot be calculated.
+                    {% endif %}
+                </p>
+                {% if trend.weekly_data_available and trend.has_baseline_data %}
+                <p class="risk-action">{{ trend.action_required }}</p>
+                {% elif not trend.has_baseline_data %}
+                <p class="risk-action">A historical weekly comparison is not available for this year.</p>
+                {% endif %}
+            </div>
+            <div class="risk-summary-side">
+                {% if trend.weekly_data_available %}
+                <div class="risk-current-count">{{ trend.current_count }}</div>
+                <div class="risk-current-caption">confirmed cases · MW {{ active_week }}</div>
+                {% else %}
+                <div class="risk-current-count risk-current-na">—</div>
+                <div class="risk-current-caption">no weekly count</div>
+                {% endif %}
+                <div class="risk-date">{{ trend.week_date_range if active_week else selected_year }}</div>
+            </div>
+        </section>
+        <section class="metric-grid" aria-label="Latest week metrics">
+            <article class="metric-card metric-card-primary">
+                <span class="metric-label">Confirmed cases</span>
+                <strong class="metric-value">{{ current_week_confirmed if current_week_confirmed is not none else '—' }}</strong>
+                <span class="metric-caption">{% if active_week %}Latest recorded week · MW {{ active_week }}{% else %}Latest recorded week unavailable{% endif %}</span>
+            </article>
+            <article class="metric-card">
+                <span class="metric-label">Historical median · P50</span>
+                <strong class="metric-value">{{ '%g'|format(trend.current_median) if trend.has_baseline_data and trend.weekly_data_available else '—' }}</strong>
+                <span class="metric-caption">Same morbidity week · {{ trend.baseline_years|length }} baseline year(s)</span>
+            </article>
+            <article class="metric-card">
+                <span class="metric-label">Upper threshold · P75</span>
+                <strong class="metric-value">{{ '%g'|format(trend.current_epidemic_threshold) if trend.has_baseline_data and trend.weekly_data_available else '—' }}</strong>
+                <span class="metric-caption">Citywide · above this level is the red tier</span>
+            </article>
+            <article class="metric-card">
+                <span class="metric-label">Locations represented</span>
+                <strong class="metric-value">{{ reporting_location_count if active_week else '—' }}</strong>
+                <span class="metric-caption">Locations with records in MW {{ active_week if active_week else '—' }}; not a coverage rate</span>
+            </article>
+        </section>
+        <div class="dashboard-content-grid weekly-dashboard-grid">
+            <section class="panel trend-panel" aria-labelledby="weekly-trend-title">
+                <div class="panel-heading">
+                    <div>
+                        <p class="panel-kicker">COMPLEMENTARY HISTORICAL COMPARISON</p>
+                        <h2 id="weekly-trend-title">Weekly confirmed cases</h2>
+                        <p>Current year compared with the same-week historical baseline.</p>
+                    </div>
+                    <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('repository') }}">View records</a>
+                </div>
+                {% if trend.weekly_data_available %}
+                <div class="chart-legend" aria-label="Chart series">
+                    <span><i class="legend-swatch legend-actual"></i>{{ selected_year }} confirmed</span>
+                    <span><i class="legend-swatch legend-median"></i>Historical median · P50</span>
+                    <span><i class="legend-swatch legend-threshold"></i>Upper threshold · P75</span>
+                    <span><i class="legend-swatch legend-forecast"></i><span id="forecast-chart-legend">Naïve forecast · next week</span></span>
+                </div>
+                <div class="chart-container">
+                    <canvas id="weekly-case-chart" role="img" aria-label="Complementary weekly confirmed cases, historical P50 and P75 thresholds, and a one-week naïve persistence estimate"></canvas>
+                </div>
+                <p class="chart-footnote">Weekly alert baseline: {{ trend.baseline_years|join(', ') if trend.baseline_years else 'not available' }}.</p>
+                {% else %}
+                <div class="empty-state">
+                    <strong>Weekly trend cannot be shown</strong>
+                    <p>No valid morbidity weeks were found for {{ selected_year }}. Add or correct week values before using the complementary weekly comparison.</p>
+                </div>
+                {% endif %}
+            </section>
+            <section class="panel forecast-panel" aria-labelledby="forecast-title">
+                <p class="panel-kicker">COMPLEMENTARY TIMELY SIGNAL · ONE-WEEK AHEAD</p>
+                <h2 id="forecast-title">Naïve persistence</h2>
+                <p class="panel-intro">Carries the latest recorded week's confirmed count forward as a short-term reference. This does not replace the primary monthly forecast.</p>
+                <div id="forecast-result" class="forecast-result" aria-live="polite">
+                    {% if trend.weekly_data_available %}
+                    Loading weekly reference…
+                    {% else %}
+                    Unavailable without a reported week
+                    {% endif %}
+                </div>
+                <p id="forecast-detail" class="forecast-detail">Use only as a timely awareness signal; verify reports and local guidance.</p>
+                <div class="forecast-method">
+                    <span class="method-equation">ŷ<sub>t+1</sub> = y<sub>t</sub></span>
+                    <span>Latest recorded weekly count carried forward</span>
+                </div>
+            </section>
+        </div>
+    </section>
+
+    <div class="modal fade dashboard-help-modal" id="dashboard-help-modal" tabindex="-1"
+         aria-labelledby="data-basis-title" aria-describedby="dashboard-help-description" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 class="modal-title" id="data-basis-title">How to use these results</h2>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close dashboard information"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="lead" id="dashboard-help-description">Monthly forecasts and barangay seasonal patterns are the main planning view. Weekly alerts are a separate, faster-changing reference.</p>
+                    <div class="dashboard-help-grid">
+                        <section aria-labelledby="monthly-help-title">
+                            <h3 id="monthly-help-title">Monthly forecast</h3>
+                            <p>The next-month estimate uses the historical median for that morbidity month. The latest month's count is shown as a persistence reference. A seasonal forecast is unavailable when there is no same-month historical baseline.</p>
+                        </section>
+                        <section aria-labelledby="cluster-help-title">
+                            <h3 id="cluster-help-title">Barangay clusters</h3>
+                            <p>Barangays are grouped by the distribution of their confirmed records across morbidity months. Groups describe recorded timing patterns, not severity, risk, or future case counts.</p>
+                        </section>
+                        <section aria-labelledby="weekly-help-title">
+                            <h3 id="weekly-help-title">Complementary weekly alert</h3>
+                            <p>The one-week naïve estimate carries the latest recorded week's count forward. It does not learn a trend or estimate the probability of an epidemic, and its result is not 100% certain. Treat weekly forecasts and risk tiers as awareness signals for possible dengue activity, not a guarantee, diagnosis, or official outbreak declaration.</p>
+                        </section>
+                        <section aria-labelledby="data-limits-title">
+                            <h3 id="data-limits-title">Data limitations</h3>
+                            <p>The database does not track zero-case submissions or reporting completeness. Months and weeks without records are gaps, not verified zeroes. Verify recent reports and follow local health-officer guidance before making decisions.</p>
+                        </section>
+                    </div>
+                    <p class="dashboard-help-totals">Selected year {{ selected_year }}: {{ total_records }} records · {{ confirmed_cases }} confirmed · {{ suspected_cases }} suspected.</p>
+                </div>
+            </div>
+        </div>
     </div>
 
     <section class="panel watchlist-panel" aria-labelledby="watchlist-title">
         <div class="panel-heading watchlist-heading">
             <div>
-                <p class="panel-kicker">BARANGAY-LEVEL REVIEW</p>
-                <h2 id="watchlist-title">Intervention priority watchlist</h2>
-                <p>Only barangays with confirmed records in the latest recorded week are listed.</p>
+                <p class="panel-kicker">COMPLEMENTARY WEEKLY BARANGAY REVIEW</p>
+                <h2 id="watchlist-title">Weekly intervention priority watchlist</h2>
+                <p>Only barangays with confirmed records in the latest recorded week are listed; this is separate from the primary monthly clusters.</p>
             </div>
             <div class="watchlist-filter">
                 <label for="watchlist-district">District</label>
@@ -271,7 +405,7 @@
     .panel-kicker {
         margin: 0 0 0.3rem;
         color: #527082;
-        font-size: 0.74rem;
+        font-size: 0.9rem;
         font-weight: 800;
         letter-spacing: 0.11em;
     }
@@ -301,7 +435,7 @@
     .year-filter label,
     .watchlist-filter label {
         color: var(--muted);
-        font-size: 0.78rem;
+        font-size: 0.95rem;
         font-weight: 700;
     }
 
@@ -354,7 +488,7 @@
 
     .risk-label {
         color: var(--risk);
-        font-size: 0.78rem;
+        font-size: 0.95rem;
         font-weight: 800;
         letter-spacing: 0.055em;
         text-transform: uppercase;
@@ -365,7 +499,7 @@
         border: 1px solid var(--risk-border);
         border-radius: 99px;
         color: var(--muted);
-        font-size: 0.77rem;
+        font-size: 0.9rem;
         font-weight: 650;
     }
 
@@ -402,7 +536,7 @@
 
     .risk-current-na { color: #647585; }
     .risk-current-caption,
-    .risk-date { margin-top: 0.35rem; color: var(--muted); font-size: 0.78rem; }
+    .risk-date { margin-top: 0.35rem; color: var(--muted); font-size: 0.9rem; }
 
     .metric-grid {
         display: grid;
@@ -427,40 +561,9 @@
     }
 
     .metric-card-primary { border-top: 3px solid #347ba0; }
-    .metric-label { color: var(--muted); font-size: 0.82rem; font-weight: 700; }
+    .metric-label { color: var(--muted); font-size: 0.95rem; font-weight: 750; }
     .metric-value { margin-top: 0.35rem; color: var(--navy); font-size: 1.8rem; line-height: 1.1; }
-    .metric-caption { margin-top: auto; padding-top: 0.55rem; color: var(--muted); font-size: 0.75rem; }
-
-    .data-basis {
-        display: flex;
-        align-items: flex-start;
-        gap: 0.7rem;
-        margin: 0.9rem 0 1.1rem;
-        padding: 0.8rem 1rem;
-        border: 1px solid #dce5eb;
-        border-radius: 0.7rem;
-        background: #f7fafb;
-    }
-
-    .data-basis-icon {
-        display: grid;
-        flex: 0 0 1.25rem;
-        width: 1.25rem;
-        height: 1.25rem;
-        place-items: center;
-        border-radius: 50%;
-        background: #e3edf2;
-        color: #355b70;
-        font-size: 0.75rem;
-        font-weight: 800;
-    }
-
-    .data-basis-content { min-width: 0; flex: 1; }
-    .data-basis-content h2 { margin: 0 0 0.55rem; color: #304858; font-size: 0.93rem; font-weight: 800; }
-    .data-basis-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.65rem 1.1rem; }
-    .data-basis-grid p { margin: 0; color: #4f6270; font-size: 0.79rem; }
-    .data-basis-grid strong { display: block; margin-bottom: 0.12rem; color: #304858; }
-    .data-basis-totals { margin: 0.55rem 0 0; padding-top: 0.5rem; border-top: 1px solid #e1e9ed; color: #647585; font-size: 0.75rem; }
+    .metric-caption { margin-top: auto; padding-top: 0.55rem; color: var(--muted); font-size: 0.9rem; }
 
     .dashboard-content-grid {
         display: grid;
@@ -469,21 +572,23 @@
         margin-bottom: 0.9rem;
     }
 
+    .monthly-primary-grid { margin-bottom: 0.85rem; }
+    .weekly-dashboard-grid { margin-bottom: 0; }
     .panel { min-width: 0; padding: clamp(1rem, 2vw, 1.35rem); }
     .panel-heading { align-items: flex-start; margin-bottom: 1rem; }
     .panel-heading h2,
     .forecast-panel h2 { margin: 0; color: var(--navy); font-size: 1.18rem; font-weight: 750; }
-    .panel-heading p:last-child { font-size: 0.83rem; }
+    .panel-heading p:last-child { font-size: 0.95rem; }
     .panel-heading .btn { flex: 0 0 auto; }
     .chart-legend { display: flex; flex-wrap: wrap; gap: 0.65rem 1.1rem; margin-bottom: 0.65rem; }
-    .chart-legend span { display: inline-flex; align-items: center; gap: 0.4rem; color: #4f6270; font-size: 0.75rem; }
+    .chart-legend span { display: inline-flex; align-items: center; gap: 0.4rem; color: #4f6270; font-size: 0.9rem; font-weight: 600; }
     .legend-swatch { display: inline-block; width: 1.1rem; height: 0.18rem; border-radius: 2px; }
     .legend-actual { background: #23769a; }
     .legend-median { background: #cb8b18; }
     .legend-threshold { background: #b94545; }
     .legend-forecast { height: 0.16rem; background: repeating-linear-gradient(90deg, #16836c 0 5px, transparent 5px 8px); }
     .chart-container { position: relative; height: clamp(16rem, 30vw, 23rem); }
-    .chart-footnote { margin: 0.6rem 0 0; color: var(--muted); font-size: 0.75rem; }
+    .chart-footnote { margin: 0.6rem 0 0; color: var(--muted); font-size: 0.9rem; }
 
     .forecast-panel {
         display: flex;
@@ -494,7 +599,7 @@
 
     .forecast-panel .panel-kicker { margin-bottom: 0.5rem; }
     .forecast-panel h2 { font-size: 1.3rem; }
-    .forecast-panel .panel-intro { font-size: 0.86rem; }
+    .forecast-panel .panel-intro { font-size: 1rem; }
     .forecast-result {
         margin-top: 1.35rem;
         color: #175c78;
@@ -503,9 +608,30 @@
         line-height: 1.2;
     }
 
-    .forecast-detail { min-height: 3.2rem; margin: 0.5rem 0 1.2rem; color: var(--muted); font-size: 0.8rem; }
-    .forecast-method { display: flex; align-items: center; gap: 0.65rem; margin-top: auto; padding-top: 0.85rem; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.77rem; }
+    .forecast-detail { min-height: 3.2rem; margin: 0.5rem 0 1.2rem; color: var(--muted); font-size: 0.95rem; }
+    .forecast-method { display: flex; align-items: center; gap: 0.65rem; margin-top: auto; padding-top: 0.85rem; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.9rem; }
     .method-equation { padding: 0.35rem 0.55rem; border-radius: 0.4rem; background: #e8f1f5; color: #27576f; font-weight: 750; white-space: nowrap; }
+
+    .clustering-panel { margin-bottom: 0.95rem; }
+    .cluster-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: 0.75rem; }
+    .cluster-card { min-width: 0; padding: 0.9rem; border: 1px solid var(--line); border-radius: 0.65rem; background: #fbfcfd; }
+    .cluster-card h3 { margin: 0; color: var(--navy); font-size: 1rem; font-weight: 750; }
+    .cluster-summary { margin: 0.35rem 0 0.6rem; color: var(--muted); font-size: 0.9rem; }
+    .cluster-location-list { display: grid; gap: 0.25rem; max-height: 12rem; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+    .cluster-location-list li { display: flex; justify-content: space-between; gap: 0.65rem; padding: 0.35rem 0; border-top: 1px solid #edf1f3; color: #344c5c; font-size: 0.95rem; }
+    .cluster-location-list small { display: block; color: var(--muted); font-size: 0.9rem; }
+    .cluster-location-list strong { flex: 0 0 auto; color: var(--navy); }
+    .dashboard-help-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+    .dashboard-help-grid section { padding: 0.9rem; border: 1px solid var(--line); border-radius: 0.65rem; background: #f8fafb; }
+    .dashboard-help-grid h3 { margin: 0 0 0.4rem; font-size: 1.05rem; font-weight: 750; }
+    .dashboard-help-grid p { margin: 0; color: #405463; }
+    .dashboard-help-totals { margin: 1rem 0 0; padding-top: 0.8rem; border-top: 1px solid var(--line); color: var(--muted); font-weight: 650; }
+    .weekly-complement { margin: 1.5rem 0 0.95rem; padding: 1rem; border: 1px solid #dce5eb; border-radius: 0.9rem; background: #f7fafb; }
+    .weekly-section-heading { margin: 0 0 0.8rem; }
+    .weekly-section-heading h2 { margin: 0; color: var(--navy); font-size: 1.2rem; font-weight: 750; }
+    .weekly-section-heading p:last-child { margin: 0.3rem 0 0; color: var(--muted); font-size: 0.95rem; }
+    .weekly-complement .risk-summary { margin-bottom: 0.85rem; }
+    .weekly-complement .metric-grid { margin-bottom: 0.85rem; }
 
     .watchlist-heading { align-items: flex-end; }
     .watchlist-filter { width: min(13rem, 100%); }
@@ -515,7 +641,7 @@
         border-bottom: 1px solid #d9e2e8;
         background: #f7f9fa;
         color: #5a6e7c;
-        font-size: 0.72rem;
+        font-size: 0.9rem;
         font-weight: 750;
         letter-spacing: 0.035em;
         text-transform: uppercase;
@@ -526,12 +652,12 @@
     .watchlist-table tbody th { padding: 0.72rem 0.75rem; border-color: #edf1f3; }
     .watchlist-table tbody tr:hover { background: #f8fafb; }
     .watchlist-table tbody tr[hidden] { display: none; }
-    .priority-number { display: grid; width: 1.65rem; height: 1.65rem; place-items: center; border-radius: 50%; background: #edf1f3; color: #405563; font-size: 0.8rem; font-weight: 800; }
+    .priority-number { display: grid; width: 1.9rem; height: 1.9rem; place-items: center; border-radius: 50%; background: #edf1f3; color: #405563; font-size: 0.9rem; font-weight: 800; }
     .barangay-name { display: block; color: #20394a; font-weight: 700; }
-    .barangay-district { display: block; margin-top: 0.15rem; color: var(--muted); font-size: 0.75rem; font-weight: 400; }
+    .barangay-district { display: block; margin-top: 0.15rem; color: var(--muted); font-size: 0.9rem; font-weight: 500; }
     .case-volume { color: #20394a; font-size: 1rem; font-weight: 800; }
     .threshold-value { color: #546977; font-variant-numeric: tabular-nums; }
-    .risk-badge { display: inline-block; padding: 0.28rem 0.52rem; border-radius: 99px; font-size: 0.7rem; font-weight: 750; white-space: nowrap; }
+    .risk-badge { display: inline-block; padding: 0.32rem 0.6rem; border-radius: 99px; font-size: 0.9rem; font-weight: 750; white-space: nowrap; }
     .risk-badge-danger { background: #fde7e5; color: #9c3434; }
     .risk-badge-warning { background: #fff2d1; color: #785200; }
     .risk-badge-success { background: #e4f3e8; color: #226442; }
@@ -539,16 +665,16 @@
     .change-up { color: #a63535; font-weight: 750; }
     .change-down { color: #26734d; font-weight: 750; }
     .change-flat { color: #536978; }
-    .change-unavailable { color: #7a8790; font-size: 0.76rem; }
-    .watchlist-footer { display: flex; justify-content: space-between; gap: 0.75rem; margin-top: 0.85rem; color: var(--muted); font-size: 0.75rem; }
+    .change-unavailable { color: #53636e; font-size: 0.9rem; }
+    .watchlist-footer { display: flex; justify-content: space-between; gap: 0.75rem; margin-top: 0.85rem; color: var(--muted); font-size: 0.9rem; }
     .tier-count { margin-left: 0.6rem; font-weight: 700; white-space: nowrap; }
     .tier-red { color: #a63535; }
     .tier-yellow { color: #8a5a00; }
     .tier-green { color: #26734d; }
     .empty-state { padding: 1.4rem; border: 1px dashed #cbd6dd; border-radius: 0.65rem; background: #fafcfd; }
     .empty-state strong { color: #344c5c; }
-    .empty-state p { margin: 0.35rem 0 0; color: var(--muted); font-size: 0.84rem; }
-    .empty-filter { margin: 1rem 0 0; color: var(--muted); font-size: 0.85rem; }
+    .empty-state p { margin: 0.35rem 0 0; color: var(--muted); font-size: 0.95rem; }
+    .empty-filter { margin: 1rem 0 0; color: var(--muted); font-size: 0.95rem; }
 
     @media (max-width: 991.98px) {
         .dashboard-content-grid { grid-template-columns: minmax(0, 1.45fr) minmax(16rem, 0.9fr); }
@@ -575,13 +701,141 @@
         .watchlist-heading { flex-direction: column; }
         .watchlist-filter { width: 100%; }
         .chart-container { height: 17rem; }
-        .data-basis-grid { grid-template-columns: 1fr; }
+        .dashboard-help-grid { grid-template-columns: 1fr; }
     }
 </style>
 <script>
     (() => {
         const trendElement = document.getElementById('dashboard-trend-data');
         const trend = trendElement ? JSON.parse(trendElement.textContent) : null;
+        const monthLabels = [
+            'January', 'February', 'March', 'April', 'May', 'June',
+            'July', 'August', 'September', 'October', 'November', 'December'
+        ];
+        const monthlyCanvas = document.getElementById('monthly-case-chart');
+        let monthlyChart = null;
+        const monthlyForecastData = Array(12).fill(null);
+        if (monthlyCanvas && trend && window.Chart) {
+            monthlyChart = new Chart(monthlyCanvas, {
+                type: 'line',
+                data: {
+                    labels: monthLabels.slice(),
+                    datasets: [{
+                        label: 'Reported confirmed cases',
+                        data: trend.monthly_actual,
+                        borderColor: '#23769a',
+                        backgroundColor: 'rgba(35, 118, 154, 0.10)',
+                        borderWidth: 2.5,
+                        pointRadius: 3,
+                        pointHoverRadius: 5,
+                        tension: 0.22,
+                        fill: true,
+                        spanGaps: false
+                    }, {
+                        label: 'Historical median · P50',
+                        data: trend.monthly_median,
+                        borderColor: '#cb8b18',
+                        borderDash: [6, 4],
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        tension: 0,
+                        fill: false,
+                        spanGaps: false
+                    }, {
+                        label: 'Upper reference · P75',
+                        data: trend.monthly_baseline_75th,
+                        borderColor: '#b94545',
+                        borderDash: [3, 4],
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        tension: 0,
+                        fill: false,
+                        spanGaps: false
+                    }, {
+                        label: 'Next-month seasonal forecast',
+                        data: monthlyForecastData,
+                        borderColor: '#16836c',
+                        borderDash: [7, 5],
+                        borderWidth: 2.5,
+                        pointRadius: 5,
+                        pointStyle: 'circle',
+                        pointBackgroundColor: '#fff',
+                        pointBorderColor: '#16836c',
+                        pointBorderWidth: 2.5,
+                        tension: 0,
+                        fill: false,
+                        spanGaps: false
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    layout: { padding: { top: 8, right: 14 } },
+                    interaction: { intersect: false, mode: 'index' },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: context => context.raw === null || context.raw === undefined
+                                    ? null
+                                    : `${context.dataset.label}: ${context.raw}`
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            offset: true,
+                            grid: { display: false },
+                            ticks: { maxTicksLimit: 12, maxRotation: 0, color: '#667987' }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            ticks: { precision: 0, color: '#667987' },
+                            title: { display: true, text: 'Confirmed case records', color: '#667987' },
+                            grid: { color: 'rgba(104, 127, 141, 0.12)' }
+                        }
+                    }
+                }
+            });
+        }
+
+        const monthlyForecastResult = document.getElementById('monthly-forecast-result');
+        const monthlyForecastDetail = document.getElementById('monthly-forecast-detail');
+        if (monthlyForecastResult && monthlyForecastDetail && trend && trend.monthly_data_available) {
+            const formatCount = value => new Intl.NumberFormat().format(Math.round(Number(value)));
+            fetch(`/api/dashboard/monthly-forecast?year=${encodeURIComponent(trend.year)}`)
+                .then(response => {
+                    if (!response.ok) throw new Error('Monthly forecast request failed');
+                    return response.json();
+                })
+                .then(forecast => {
+                    if (forecast.predicted_cases === null || forecast.predicted_cases === undefined) {
+                        monthlyForecastResult.textContent = 'Seasonal forecast unavailable';
+                        monthlyForecastDetail.textContent = `No historical observations are available for ${monthLabels[forecast.target_month - 1]}. The latest reported month's count (${formatCount(forecast.naive_persistence)}) is shown only as a persistence reference.`;
+                    } else {
+                        monthlyForecastResult.textContent = `${formatCount(forecast.predicted_cases)} cases`;
+                        monthlyForecastDetail.textContent = `${monthLabels[forecast.target_month - 1]} ${forecast.target_year}: historical same-month median from ${forecast.historical_baseline_count} baseline year(s). Monthly persistence reference: ${formatCount(forecast.naive_persistence)} cases from ${monthLabels[forecast.source_month - 1]}. These are reported-case estimates, not verified incidence or an outbreak probability.`;
+                        if (monthlyChart) {
+                            const sourceIndex = forecast.source_month - 1;
+                            let targetIndex = forecast.target_month - 1;
+                            if (forecast.target_year > forecast.year) {
+                                monthlyChart.data.labels.push(`${monthLabels[targetIndex]} ${forecast.target_year}`);
+                                monthlyChart.data.datasets.forEach(dataset => dataset.data.push(null));
+                                targetIndex = monthlyChart.data.labels.length - 1;
+                            }
+                            monthlyForecastData[sourceIndex] = Number(forecast.current_cases);
+                            monthlyForecastData[targetIndex] = Number(forecast.predicted_cases);
+                            monthlyChart.data.datasets[3].data = monthlyForecastData;
+                            monthlyChart.update();
+                        }
+                    }
+                })
+                .catch(() => {
+                    monthlyForecastResult.textContent = 'Monthly forecast unavailable';
+                    monthlyForecastDetail.textContent = 'The monthly forecast service could not return a projection. Review the reported monthly counts and historical baseline before interpreting the dashboard.';
+                });
+        }
+
         const chartCanvas = document.getElementById('weekly-case-chart');
         let weeklyChart = null;
         let forecastPointIndex = null;

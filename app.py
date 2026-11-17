@@ -22,6 +22,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 import pandas as pd
 import numpy as np
+from sklearn.cluster import KMeans
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, mean_absolute_error
@@ -464,6 +465,9 @@ def get_dashboard_trend(current_year=None):
     weekly_baseline_years = tuple(
         year for year in baseline_years if year in reported_weeks_by_year
     )
+    monthly_baseline_years = tuple(
+        year for year in baseline_years if year in reported_months_by_year
+    )
     current_reported_weeks = reported_weeks_by_year.get(current_year, set())
     current_week_data_available = current_year in reported_weeks_by_year
     # Stop the actuals line after the latest week present in the data.
@@ -487,26 +491,27 @@ def get_dashboard_trend(current_year=None):
 
     current_reported_months = reported_months_by_year.get(current_year, set())
     monthly_actual = [
-        counts_by_year_month.get((current_year, month), 0)
+        counts_by_year_month.get((current_year, month))
+        if month in current_reported_months else None
         for month in range(1, 13)
     ]
-    if not current_reported_months:
-        monthly_actual = [None] * 12
     monthly_baseline_values = [
         [
             counts_by_year_month.get((year, month), 0)
-            for year in baseline_years
+            for year in monthly_baseline_years
+            if month in reported_months_by_year.get(year, set())
         ]
         for month in range(1, 13)
     ]
     monthly_median = [
-        calculate_dashboard_quantile(values, 0.5)
+        calculate_dashboard_quantile(values, 0.5) if values else None
         for values in monthly_baseline_values
     ]
     monthly_percentile_75 = [
-        calculate_dashboard_quantile(values, 0.75)
+        calculate_dashboard_quantile(values, 0.75) if values else None
         for values in monthly_baseline_values
     ]
+    monthly_baseline_counts = [len(values) for values in monthly_baseline_values]
 
     active_year = datetime.now().year
     if current_year == active_year:
@@ -547,6 +552,11 @@ def get_dashboard_trend(current_year=None):
         'monthly_actual': monthly_actual,
         'monthly_median': monthly_median,
         'monthly_baseline_75th': monthly_percentile_75,
+        'monthly_baseline_counts': monthly_baseline_counts,
+        'monthly_baseline_years': list(monthly_baseline_years),
+        'monthly_reported_months': sorted(current_reported_months),
+        'current_month': max(current_reported_months) if current_reported_months else None,
+        'monthly_data_available': bool(current_reported_months),
         'current_week': current_week,
         'week_date_range': week_date_range,
         'current_count': current_count,
@@ -736,6 +746,133 @@ def dashboard_forecast_api():
         'forecasts': forecasts,
     })
 
+
+@app.route('/api/dashboard/monthly-forecast')
+@login_required
+def dashboard_monthly_forecast_api():
+    requested_year = request.args.get('year', type=int)
+    available_years = get_dashboard_years()
+    current_year = (
+        requested_year if requested_year in available_years
+        else available_years[-1] if available_years
+        else datetime.now().year
+    )
+    trend = get_dashboard_trend(current_year)
+    current_month = trend['current_month']
+
+    if current_month is None:
+        return jsonify({
+            'year': current_year,
+            'source_month': None,
+            'target_month': None,
+            'target_year': None,
+            'current_cases': None,
+            'predicted_cases': None,
+            'naive_persistence': None,
+            'historical_baseline_count': 0,
+            'prediction_method': None,
+            'monthly_data_available': False,
+        })
+
+    target_month = current_month % 12 + 1
+    target_year = current_year + (1 if current_month == 12 else 0)
+    current_cases = trend['monthly_actual'][current_month - 1]
+    historical_baseline_count = trend['monthly_baseline_counts'][target_month - 1]
+    predicted_cases = trend['monthly_median'][target_month - 1]
+
+    return jsonify({
+        'year': current_year,
+        'source_month': current_month,
+        'target_month': target_month,
+        'target_year': target_year,
+        'current_cases': current_cases,
+        'predicted_cases': predicted_cases,
+        'naive_persistence': current_cases,
+        'historical_baseline_count': historical_baseline_count,
+        'prediction_method': (
+            'historical_monthly_median' if predicted_cases is not None else None
+        ),
+        'monthly_data_available': True,
+    })
+
+
+def cluster_monthly_barangay_profiles(records):
+    counts_by_location_month = {}
+    for record in records:
+        month = parse_dashboard_integer(record.morbidity_month, minimum=1, maximum=12)
+        if (
+            month is None
+            or not is_available_dashboard_value(record.barangay)
+            or classify_dashboard_case(record.case_classification) != 'confirmed'
+        ):
+            continue
+        location = (
+            str(record.district).strip()
+            if is_available_dashboard_value(record.district) else '',
+            str(record.barangay).strip(),
+        )
+        monthly_counts = counts_by_location_month.setdefault(location, [0] * 12)
+        monthly_counts[month - 1] += 1
+
+    locations = sorted(counts_by_location_month)
+    if len(locations) < 2:
+        return {'clusters': [], 'location_count': len(locations)}
+
+    profiles = []
+    for location in locations:
+        monthly_counts = counts_by_location_month[location]
+        total_cases = sum(monthly_counts)
+        profiles.append([count / total_cases for count in monthly_counts])
+
+    unique_profiles = {tuple(profile) for profile in profiles}
+    if len(unique_profiles) < 2:
+        return {'clusters': [], 'location_count': len(locations)}
+
+    cluster_count = min(3, len(unique_profiles), len(locations))
+    model = KMeans(n_clusters=cluster_count, random_state=42, n_init=10)
+    labels = model.fit_predict(profiles)
+    grouped = {}
+    for index, label in enumerate(labels):
+        group = grouped.setdefault(int(label), {
+            'locations': [],
+            'monthly_profile': [0.0] * 12,
+            'confirmed_cases': 0,
+        })
+        monthly_counts = counts_by_location_month[locations[index]]
+        group['locations'].append({
+            'district': locations[index][0],
+            'name': locations[index][1],
+            'confirmed_cases': sum(monthly_counts),
+        })
+        group['confirmed_cases'] += sum(monthly_counts)
+        for month_index, share in enumerate(profiles[index]):
+            group['monthly_profile'][month_index] += share
+
+    cluster_rows = []
+    for group in grouped.values():
+        location_count = len(group['locations'])
+        average_profile = [
+            round(value / location_count, 3)
+            for value in group['monthly_profile']
+        ]
+        peak_month = max(range(12), key=average_profile.__getitem__) + 1
+        group['locations'].sort(
+            key=lambda item: (-item['confirmed_cases'], item['name'].casefold())
+        )
+        cluster_rows.append({
+            'peak_month': peak_month,
+            'locations': group['locations'],
+            'location_count': location_count,
+            'confirmed_cases': group['confirmed_cases'],
+            'monthly_profile': average_profile,
+        })
+    cluster_rows.sort(key=lambda item: (item['peak_month'], item['confirmed_cases']))
+    for index, cluster in enumerate(cluster_rows, start=1):
+        cluster['label'] = f'Seasonal profile {index}'
+
+    return {'clusters': cluster_rows, 'location_count': len(locations)}
+
+
 @app.route('/dashboard')
 @login_required
 def dashboard():
@@ -769,6 +906,19 @@ def dashboard():
     ]
     confirmed_cases = len(confirmed_records)
     trend = get_dashboard_trend(selected_year)
+    monthly_clustering = cluster_monthly_barangay_profiles(records_list)
+    current_month = trend['current_month']
+    monthly_location_count = len({
+        (
+            str(record.district).strip()
+            if is_available_dashboard_value(record.district) else '',
+            str(record.barangay).strip(),
+        )
+        for record in records_list
+        if current_month is not None
+        and parse_dashboard_integer(record.morbidity_month, minimum=1, maximum=12) == current_month
+        and is_available_dashboard_value(record.barangay)
+    })
     active_week = trend['current_week'] if trend['weekly_data_available'] else None
     case_counts_by_location_week = {}
     recorded_weeks_by_location = {}
@@ -904,6 +1054,10 @@ def dashboard():
         current_week_suspected=current_week_suspected,
         reporting_location_count=len(weekly_locations),
         trend=trend,
+        monthly_clustering=monthly_clustering,
+        monthly_location_count=monthly_location_count,
+        current_month=current_month,
+        month_names=list(calendar.month_name)[1:],
         available_years=available_years,
         selected_year=selected_year,
         watchlist=watchlist,
