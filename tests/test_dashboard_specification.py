@@ -310,9 +310,11 @@ class DashboardSpecificationTest(IsolatedDatabaseTestCase):
         ).get_json()
         self.assertEqual(forecast['source_month'], 3)
         self.assertEqual(forecast['target_month'], 4)
-        self.assertEqual(forecast['predicted_cases'], 6)
+        self.assertEqual(forecast['predicted_cases'], 4)
         self.assertEqual(forecast['naive_persistence'], 4)
         self.assertEqual(forecast['historical_baseline_count'], 3)
+        self.assertEqual(forecast['seasonal_median_comparison'], 6)
+        self.assertEqual(forecast['prediction_method'], 'naive_persistence')
 
         dashboard = client.get(f'/dashboard?year={current_year}').get_data(as_text=True)
         self.assertLess(

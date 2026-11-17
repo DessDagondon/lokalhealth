@@ -63,8 +63,8 @@
 
         <section class="panel forecast-panel monthly-forecast-panel" aria-labelledby="monthly-forecast-title">
             <p class="panel-kicker">PRIMARY FORECAST · ONE MONTH AHEAD</p>
-            <h2 id="monthly-forecast-title">Historical seasonal median</h2>
-            <p class="panel-intro">Uses the historical median for the next morbidity month. A monthly persistence reference is shown for comparison.</p>
+            <h2 id="monthly-forecast-title">Monthly naïve persistence</h2>
+            <p class="panel-intro">Carries the latest reported month's confirmed count forward as next month's estimate. The historical seasonal median remains a comparison only.</p>
             <div id="monthly-forecast-result" class="forecast-result" aria-live="polite">
                 {% if trend.monthly_data_available %}
                 Loading monthly forecast…
@@ -76,8 +76,8 @@
                 This is a planning reference, not a certainty, diagnosis, or epidemic probability.
             </p>
             <div class="forecast-method">
-                <span class="method-equation">P50<sub>month</sub></span>
-                <span>Same-month historical confirmed-case median</span>
+                <span class="method-equation">ŷ<sub>t+1</sub> = y<sub>t</sub></span>
+                <span>Latest reported monthly count carried forward</span>
             </div>
         </section>
     </div>
@@ -273,7 +273,7 @@
                     <div class="dashboard-help-grid">
                         <section aria-labelledby="monthly-help-title">
                             <h3 id="monthly-help-title">Monthly forecast</h3>
-                            <p>The next-month estimate uses the historical median for that morbidity month. The latest month's count is shown as a persistence reference. A seasonal forecast is unavailable when there is no same-month historical baseline.</p>
+                            <p>The next-month estimate carries the latest reported month's confirmed count forward. The same-month historical median is shown as a comparison, not used to calculate the forecast.</p>
                         </section>
                         <section aria-labelledby="cluster-help-title">
                             <h3 id="cluster-help-title">Barangay clusters</h3>
@@ -752,7 +752,7 @@
                         fill: false,
                         spanGaps: false
                     }, {
-                        label: 'Next-month seasonal forecast',
+                        label: 'Next-month naïve persistence forecast',
                         data: monthlyForecastData,
                         borderColor: '#16836c',
                         borderDash: [7, 5],
@@ -810,11 +810,14 @@
                 })
                 .then(forecast => {
                     if (forecast.predicted_cases === null || forecast.predicted_cases === undefined) {
-                        monthlyForecastResult.textContent = 'Seasonal forecast unavailable';
-                        monthlyForecastDetail.textContent = `No historical observations are available for ${monthLabels[forecast.target_month - 1]}. The latest reported month's count (${formatCount(forecast.naive_persistence)}) is shown only as a persistence reference.`;
+                        monthlyForecastResult.textContent = 'Monthly forecast unavailable';
+                        monthlyForecastDetail.textContent = 'No reported monthly case count is available to carry forward for this year.';
                     } else {
                         monthlyForecastResult.textContent = `${formatCount(forecast.predicted_cases)} cases`;
-                        monthlyForecastDetail.textContent = `${monthLabels[forecast.target_month - 1]} ${forecast.target_year}: historical same-month median from ${forecast.historical_baseline_count} baseline year(s). Monthly persistence reference: ${formatCount(forecast.naive_persistence)} cases from ${monthLabels[forecast.source_month - 1]}. These are reported-case estimates, not verified incidence or an outbreak probability.`;
+                        const seasonalComparison = forecast.seasonal_median_comparison === null
+                            ? 'No historical same-month median is available for comparison.'
+                            : `Historical same-month median comparison: ${formatCount(forecast.seasonal_median_comparison)} cases from ${forecast.historical_baseline_count} baseline year(s).`;
+                        monthlyForecastDetail.textContent = `${monthLabels[forecast.target_month - 1]} ${forecast.target_year}: carries ${formatCount(forecast.current_cases)} confirmed cases from ${monthLabels[forecast.source_month - 1]} forward. ${seasonalComparison} This is a reported-case estimate, not verified incidence or an outbreak probability.`;
                         if (monthlyChart) {
                             const sourceIndex = forecast.source_month - 1;
                             let targetIndex = forecast.target_month - 1;

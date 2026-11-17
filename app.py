@@ -770,6 +770,7 @@ def dashboard_monthly_forecast_api():
             'predicted_cases': None,
             'naive_persistence': None,
             'historical_baseline_count': 0,
+            'seasonal_median_comparison': None,
             'prediction_method': None,
             'monthly_data_available': False,
         })
@@ -778,7 +779,8 @@ def dashboard_monthly_forecast_api():
     target_year = current_year + (1 if current_month == 12 else 0)
     current_cases = trend['monthly_actual'][current_month - 1]
     historical_baseline_count = trend['monthly_baseline_counts'][target_month - 1]
-    predicted_cases = trend['monthly_median'][target_month - 1]
+    predicted_cases = current_cases
+    seasonal_median_comparison = trend['monthly_median'][target_month - 1]
 
     return jsonify({
         'year': current_year,
@@ -789,9 +791,8 @@ def dashboard_monthly_forecast_api():
         'predicted_cases': predicted_cases,
         'naive_persistence': current_cases,
         'historical_baseline_count': historical_baseline_count,
-        'prediction_method': (
-            'historical_monthly_median' if predicted_cases is not None else None
-        ),
+        'seasonal_median_comparison': seasonal_median_comparison,
+        'prediction_method': 'naive_persistence',
         'monthly_data_available': True,
     })
 
